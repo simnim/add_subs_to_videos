@@ -1,7 +1,7 @@
 [project]
-name = "cc-whisperx"
+name = "add_subs_to_videos"
 version = "0.1.0"
-description = "Recursive video-to-SRT transcription using WhisperX and speaker diarization"
+description = "Add missing subtitles. Recursive video-to-SRT transcription using WhisperX and speaker diarization"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
