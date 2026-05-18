@@ -1,3 +1,5 @@
+### NOTE: This is a vibe coded app. Proceed with caution.
+
 # Add subs to videos:
 
 A Python CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [WhisperX](https://github.com/m-bain/whisperX) for transcription and pyannote.audio for speaker diarization.
