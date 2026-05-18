@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`cc-whisperx` is a Python 3.13 CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [WhisperX](https://github.com/m-bain/whisperX) (transcription + word alignment) and pyannote.audio (speaker diarization).
+`add_subs_to_videos` is a Python 3.13 CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [WhisperX](https://github.com/m-bain/whisperX) (transcription + word alignment) and pyannote.audio (speaker diarization).
 
 Main script: `crawl_srt.py` — entry point exposed as `crawl-srt` via `[project.scripts]`.
 
