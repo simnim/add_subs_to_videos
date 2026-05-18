@@ -1,7 +1,28 @@
 [project]
 name = "cc-whisperx"
 version = "0.1.0"
-description = "Add your description here"
+description = "Recursive video-to-SRT transcription using WhisperX and speaker diarization"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "whisperx",
+    "torch>=2.0",
+    "pyannote.audio>=3.1",
+    "faster-whisper",
+    "ctranslate2",
+]
+
+[project.scripts]
+crawl-srt = "crawl_srt:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-mock"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "integration: end-to-end tests that download real audio and run the full WhisperX pipeline (requires HUGGINGFACE_TOKEN)",
+]
+
+[tool.uv]
+package = true
