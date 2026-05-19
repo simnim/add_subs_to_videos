@@ -20,6 +20,7 @@ dev = ["pytest>=8.0", "pytest-mock"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = "-vvv -rA"
 markers = [
     "integration: end-to-end tests that download real audio and run the full WhisperX pipeline (requires HUGGINGFACE_TOKEN)",
 ]
