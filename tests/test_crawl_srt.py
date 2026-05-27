@@ -6,17 +6,12 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-import crawl_srt
-from crawl_srt import (
-    build_parser,
-    detect_device,
-    find_videos,
-    format_srt_timestamp,
-    process_directory,
-    resolve_hf_token,
-    segments_to_srt,
-    transcribe_video,
-)
+import add_subs_to_videos.device as _device_mod
+from add_subs_to_videos.cli import build_parser
+from add_subs_to_videos.device import detect_device, resolve_hf_token
+from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
+from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
+from add_subs_to_videos.transcribe import process_directory, transcribe_video
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +222,7 @@ class TestFindVideos:
     def test_returns_only_video_files(self, tmp_video_dir):
         videos = find_videos(tmp_video_dir)
         suffixes = {p.suffix for p in videos}
-        assert suffixes <= crawl_srt.VIDEO_EXTENSIONS
+        assert suffixes <= VIDEO_EXTENSIONS
 
     def test_excludes_non_video_files(self, tmp_video_dir):
         videos = find_videos(tmp_video_dir)
@@ -260,10 +255,10 @@ class TestFindVideos:
         assert len(videos) == 2
 
     def test_all_supported_extensions_found(self, tmp_path):
-        for ext in crawl_srt.VIDEO_EXTENSIONS:
+        for ext in VIDEO_EXTENSIONS:
             (tmp_path / f"file{ext}").touch()
         videos = find_videos(tmp_path)
-        assert len(videos) == len(crawl_srt.VIDEO_EXTENSIONS)
+        assert len(videos) == len(VIDEO_EXTENSIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +271,9 @@ class TestDetectDevice:
         torch_mock = mocker.MagicMock()
         torch_mock.cuda.is_available.return_value = True
         mocker.patch.dict(sys.modules, {"torch": torch_mock})
-        # Re-import to pick up the mock
         import importlib
-        importlib.reload(crawl_srt)
-        device, compute_type = crawl_srt.detect_device()
+        importlib.reload(_device_mod)
+        device, compute_type = _device_mod.detect_device()
         assert device == "cuda"
         assert compute_type == "float16"
 
@@ -289,8 +283,8 @@ class TestDetectDevice:
         torch_mock.backends.mps.is_available.return_value = True
         mocker.patch.dict(sys.modules, {"torch": torch_mock})
         import importlib
-        importlib.reload(crawl_srt)
-        device, compute_type = crawl_srt.detect_device()
+        importlib.reload(_device_mod)
+        device, compute_type = _device_mod.detect_device()
         assert device == "mps"
         assert compute_type == "float32"
 
@@ -300,16 +294,16 @@ class TestDetectDevice:
         torch_mock.backends.mps.is_available.return_value = False
         mocker.patch.dict(sys.modules, {"torch": torch_mock})
         import importlib
-        importlib.reload(crawl_srt)
-        device, compute_type = crawl_srt.detect_device()
+        importlib.reload(_device_mod)
+        device, compute_type = _device_mod.detect_device()
         assert device == "cpu"
         assert compute_type == "int8"
 
     def test_torch_import_error_falls_back_to_cpu(self, mocker):
         mocker.patch.dict(sys.modules, {"torch": None})
         import importlib
-        importlib.reload(crawl_srt)
-        device, compute_type = crawl_srt.detect_device()
+        importlib.reload(_device_mod)
+        device, compute_type = _device_mod.detect_device()
         assert device == "cpu"
         assert compute_type == "int8"
 

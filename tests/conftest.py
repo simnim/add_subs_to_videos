@@ -21,8 +21,8 @@ def tmp_video_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def mock_whisperx(mocker):
     """
-    Patches crawl_srt.whisperx with a MagicMock wired to return canned
-    diarized segments. Tests may override individual attributes.
+    Patches add_subs_to_videos.transcribe.whisperx with a MagicMock wired to
+    return canned diarized segments. Tests may override individual attributes.
     """
     fake_segments = [
         {"start": 1.0, "end": 3.5, "text": "Hello world", "speaker": "SPEAKER_00"},
@@ -39,5 +39,5 @@ def mock_whisperx(mocker):
     mx.diarize_pipeline.return_value = mx.diarize_segments
     mx.assign_word_speakers.return_value = {"segments": fake_segments}
 
-    mocker.patch("crawl_srt.whisperx", mx)
+    mocker.patch("add_subs_to_videos.transcribe.whisperx", mx)
     return mx

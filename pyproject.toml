@@ -13,13 +13,13 @@ dependencies = [
 ]
 
 [project.scripts]
-crawl-srt = "crawl_srt:main"
+crawl-srt = "add_subs_to_videos.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-mock"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = "-vvv -rA"
 markers = [
     "integration: end-to-end tests that download real audio and run the full WhisperX pipeline (requires HUGGINGFACE_TOKEN)",

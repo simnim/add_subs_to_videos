@@ -1,6 +1,6 @@
 """
 Integration test: downloads a real Wikipedia spoken-article audio file and
-runs the full crawl_srt pipeline end-to-end (transcription + alignment +
+runs the full add_subs_to_videos pipeline end-to-end (transcription + alignment +
 speaker diarization).
 
 Run with:
@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from crawl_srt import detect_device, process_directory
+from add_subs_to_videos.device import detect_device
+from add_subs_to_videos.transcribe import process_directory
 
 AUDIO_URL = "https://upload.wikimedia.org/wikipedia/commons/4/48/En-.fun-article.ogg"
 # Saved with a .mp4 extension so find_videos() picks it up; ffmpeg probes the
@@ -137,7 +138,7 @@ def test_skip_logic_honours_existing_srt(downloaded_audio, hf_token, mocker):
     srt_path = downloaded_audio.with_suffix(".srt")
     srt_path.write_text("sentinel content", encoding="utf-8")
 
-    load_audio_spy = mocker.patch("crawl_srt.whisperx.load_audio", wraps=None)
+    load_audio_spy = mocker.patch("add_subs_to_videos.transcribe.whisperx.load_audio", wraps=None)
     # wraps=None means the mock returns MagicMock but we just want call count
 
     device, compute_type = detect_device()
