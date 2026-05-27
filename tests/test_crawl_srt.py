@@ -183,6 +183,23 @@ class TestBuildParser:
         args = parser.parse_args(["/some/dir", "--model", "small"])
         assert args.hf_token is None
 
+    def test_quiet_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["/some/dir", "--model", "small", "--quiet"])
+        assert args.quiet is True
+        assert args.verbose is False
+
+    def test_verbose_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["/some/dir", "--model", "small", "--verbose"])
+        assert args.verbose is True
+        assert args.quiet is False
+
+    def test_quiet_and_verbose_are_mutually_exclusive(self):
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["/some/dir", "--model", "small", "--quiet", "--verbose"])
+
 
 # ---------------------------------------------------------------------------
 # resolve_hf_token

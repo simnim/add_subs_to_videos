@@ -41,12 +41,29 @@ def build_parser() -> argparse.ArgumentParser:
         dest="batch_size",
         help="Transcription batch size (default: 16; lower to 4-8 on CPU/MPS)",
     )
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress per-file progress; show only errors and the final summary",
+    )
+    verbosity.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show debug output including detected language per file",
+    )
     return parser
 
 
 def main() -> None:
+    if args.verbose:
+        level = logging.DEBUG
+    elif args.quiet:
+        level = logging.WARNING
+    else:
+        level = logging.INFO
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%H:%M:%S",
     )

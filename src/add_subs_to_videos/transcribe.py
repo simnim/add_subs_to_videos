@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 import whisperx
@@ -53,19 +54,25 @@ def process_directory(
         logging.warning("No video files found under %s", root)
         return
 
+    total = len(videos)
+    logging.info("Found %d video(s)", total)
     logging.info("Loading model '%s' on %s (%s)", model_name, device, compute_type)
     model = whisperx.load_model(model_name, device, compute_type=compute_type)
 
     failed: list[tuple[Path, str]] = []
+    skipped = transcribed = 0
+    t0 = time.monotonic()
 
-    for video_path in videos:
+    for i, video_path in enumerate(videos, 1):
+        prefix = f"[{i}/{total}]"
         srt_path = video_path.with_suffix(".srt")
 
         if srt_path.exists() and not force:
-            logging.info("SKIP  %s", video_path)
+            logging.info("%s SKIP  %s", prefix, video_path)
+            skipped += 1
             continue
 
-        logging.info("START %s", video_path)
+        logging.info("%s START %s", prefix, video_path)
         try:
             srt_content = transcribe_video(
                 video_path,
@@ -76,10 +83,17 @@ def process_directory(
                 batch_size=batch_size,
             )
             srt_path.write_text(srt_content, encoding="utf-8")
-            logging.info("DONE  %s -> %s", video_path.name, srt_path.name)
+            logging.info("%s DONE  %s -> %s", prefix, video_path.name, srt_path.name)
+            transcribed += 1
         except Exception as exc:
-            logging.error("FAIL  %s: %s", video_path, exc, exc_info=True)
+            logging.error("%s FAIL  %s: %s", prefix, video_path, exc, exc_info=True)
             failed.append((video_path, str(exc)))
+
+    elapsed = time.monotonic() - t0
+    print(
+        f"Summary: {transcribed} transcribed, {skipped} skipped, {len(failed)} failed"
+        f"  ({elapsed:.0f}s)"
+    )
 
     if failed:
         logging.warning("%d file(s) failed:", len(failed))
