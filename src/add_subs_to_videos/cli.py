@@ -16,9 +16,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("directory", type=Path, help="Root directory to crawl for video files")
     parser.add_argument(
         "--model",
-        required=True,
+        default="medium",
         choices=["tiny", "base", "small", "medium", "large-v3"],
-        help="WhisperX model size",
+        help="WhisperX model size (default: medium)",
     )
     parser.add_argument(
         "--language",
@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     verbosity.add_argument(
         "--quiet", "-q",
         action="store_true",
-        help="Suppress per-file progress; show only errors and the final summary",
+        help="Suppress per-file progress and the tqdm bar; show only errors and the final summary",
     )
     verbosity.add_argument(
         "--verbose", "-v",
@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
     if args.verbose:
         level = logging.DEBUG
     elif args.quiet:
@@ -67,9 +70,6 @@ def main() -> None:
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%H:%M:%S",
     )
-
-    parser = build_parser()
-    args = parser.parse_args()
 
     hf_token = resolve_hf_token(args.hf_token)
     device, compute_type = detect_device()
@@ -84,6 +84,7 @@ def main() -> None:
         language=args.language,
         force=args.force,
         batch_size=args.batch_size,
+        show_progress=not args.quiet,
     )
 
 

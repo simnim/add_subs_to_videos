@@ -123,10 +123,10 @@ class TestSegmentsToSrt:
 
 
 class TestBuildParser:
-    def test_missing_model_exits(self):
+    def test_missing_model_defaults_to_medium(self):
         parser = build_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args(["/some/dir"])
+        args = parser.parse_args(["/some/dir"])
+        assert args.model == "medium"
 
     def test_invalid_model_exits(self):
         parser = build_parser()
@@ -410,6 +410,7 @@ _COMMON_KWARGS = dict(
     language=None,
     force=False,
     batch_size=16,
+    show_progress=False,
 )
 
 

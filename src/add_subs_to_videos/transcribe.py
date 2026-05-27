@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 
 import whisperx
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from .files import find_videos
 from .srt import segments_to_srt
@@ -48,14 +50,13 @@ def process_directory(
     language: str | None,
     force: bool,
     batch_size: int,
+    show_progress: bool = True,
 ) -> None:
     videos = find_videos(root)
     if not videos:
         logging.warning("No video files found under %s", root)
         return
 
-    total = len(videos)
-    logging.info("Found %d video(s)", total)
     logging.info("Loading model '%s' on %s (%s)", model_name, device, compute_type)
     model = whisperx.load_model(model_name, device, compute_type=compute_type)
 
@@ -63,31 +64,42 @@ def process_directory(
     skipped = transcribed = 0
     t0 = time.monotonic()
 
-    for i, video_path in enumerate(videos, 1):
-        prefix = f"[{i}/{total}]"
-        srt_path = video_path.with_suffix(".srt")
+    with logging_redirect_tqdm():
+        bar = tqdm(
+            videos,
+            desc="transcribing",
+            unit="video",
+            disable=not show_progress,
+            dynamic_ncols=True,
+        )
+        for video_path in bar:
+            bar.set_description(video_path.stem[:40])
+            srt_path = video_path.with_suffix(".srt")
 
-        if srt_path.exists() and not force:
-            logging.info("%s SKIP  %s", prefix, video_path)
-            skipped += 1
-            continue
+            if srt_path.exists() and not force:
+                logging.info("SKIP  %s", video_path)
+                skipped += 1
+                bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
+                continue
 
-        logging.info("%s START %s", prefix, video_path)
-        try:
-            srt_content = transcribe_video(
-                video_path,
-                model=model,
-                device=device,
-                hf_token=hf_token,
-                language=language,
-                batch_size=batch_size,
-            )
-            srt_path.write_text(srt_content, encoding="utf-8")
-            logging.info("%s DONE  %s -> %s", prefix, video_path.name, srt_path.name)
-            transcribed += 1
-        except Exception as exc:
-            logging.error("%s FAIL  %s: %s", prefix, video_path, exc, exc_info=True)
-            failed.append((video_path, str(exc)))
+            logging.info("START %s", video_path)
+            try:
+                srt_content = transcribe_video(
+                    video_path,
+                    model=model,
+                    device=device,
+                    hf_token=hf_token,
+                    language=language,
+                    batch_size=batch_size,
+                )
+                srt_path.write_text(srt_content, encoding="utf-8")
+                logging.info("DONE  %s -> %s", video_path.name, srt_path.name)
+                transcribed += 1
+            except Exception as exc:
+                logging.error("FAIL  %s: %s", video_path, exc, exc_info=True)
+                failed.append((video_path, str(exc)))
+
+            bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
 
     elapsed = time.monotonic() - t0
     print(
