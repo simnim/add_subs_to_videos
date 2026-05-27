@@ -219,10 +219,9 @@ class TestResolveHfToken:
         monkeypatch.setenv("HUGGINGFACE_TOKEN", "hf_env")
         assert resolve_hf_token("hf_cli") == "hf_cli"
 
-    def test_neither_provided_exits(self, monkeypatch):
+    def test_neither_provided_returns_none(self, monkeypatch):
         monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-        with pytest.raises(SystemExit):
-            resolve_hf_token(None)
+        assert resolve_hf_token(None) is None
 
     def test_empty_cli_falls_through_to_env(self, monkeypatch):
         # Empty string is falsy — env var should be used
@@ -294,16 +293,15 @@ class TestDetectDevice:
         assert device == "cuda"
         assert compute_type == "float16"
 
-    def test_mps_available(self, mocker):
+    def test_mps_falls_back_to_cpu(self, mocker):
         torch_mock = mocker.MagicMock()
         torch_mock.cuda.is_available.return_value = False
-        torch_mock.backends.mps.is_available.return_value = True
         mocker.patch.dict(sys.modules, {"torch": torch_mock})
         import importlib
         importlib.reload(_device_mod)
         device, compute_type = _device_mod.detect_device()
-        assert device == "mps"
-        assert compute_type == "float32"
+        assert device == "cpu"
+        assert compute_type == "int8"
 
     def test_cpu_fallback(self, mocker):
         torch_mock = mocker.MagicMock()
@@ -385,6 +383,16 @@ class TestTranscribeVideo:
         mock_whisperx.DiarizationPipeline.assert_called_once_with(
             use_auth_token="hf_secret", device="cpu"
         )
+
+    def test_no_hf_token_skips_diarization(self, tmp_path, mock_whisperx):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        transcribe_video(
+            video, model=mock_whisperx.model, device="cpu",
+            hf_token=None, language=None, batch_size=16,
+        )
+        mock_whisperx.DiarizationPipeline.assert_not_called()
+        mock_whisperx.assign_word_speakers.assert_not_called()
 
     def test_batch_size_forwarded_to_transcribe(self, tmp_path, mock_whisperx):
         video = tmp_path / "clip.mp4"

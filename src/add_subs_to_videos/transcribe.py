@@ -18,7 +18,7 @@ def transcribe_video(
     *,
     model: whisperx.Whisper,
     device: str,
-    hf_token: str,
+    hf_token: str | None,
     language: str | None,
     batch_size: int,
 ) -> str:
@@ -33,9 +33,10 @@ def transcribe_video(
         result["segments"], align_model, metadata, audio, device, return_char_alignments=False
     )
 
-    diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
-    diarize_segments = diarize_model(audio)
-    result = whisperx.assign_word_speakers(diarize_segments, result)
+    if hf_token is not None:
+        diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+        diarize_segments = diarize_model(audio)
+        result = whisperx.assign_word_speakers(diarize_segments, result)
 
     return segments_to_srt(result["segments"])
 
@@ -46,7 +47,7 @@ def process_directory(
     model_name: str,
     device: str,
     compute_type: str,
-    hf_token: str,
+    hf_token: str | None,
     language: str | None,
     force: bool,
     batch_size: int,
