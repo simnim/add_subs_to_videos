@@ -12,7 +12,6 @@ dependencies = [
 ]
 
 [project.scripts]
-crawl-srt = "add_subs_to_videos.cli:main"
 add_subs_to_videos = "add_subs_to_videos.cli:main"
 
 [dependency-groups]

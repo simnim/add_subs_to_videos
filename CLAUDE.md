@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `add_subs_to_videos` is a Python 3.13 CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (via `pywhispercpp`) for transcription and pyannote.audio for speaker diarization.
 
-Entry points: `crawl-srt` and `add_subs_to_videos` CLIs exposed via `[project.scripts]` → `add_subs_to_videos.cli:main`. Also runnable as `python -m add_subs_to_videos` via `__main__.py`.
+Entry point: `add_subs_to_videos` CLI exposed via `[project.scripts]` → `add_subs_to_videos.cli:main`. Also runnable as `python -m add_subs_to_videos` via `__main__.py`.
 
 ## Environment
 

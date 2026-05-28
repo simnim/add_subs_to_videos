@@ -33,7 +33,7 @@ HUGGINGFACE_TOKEN=hf_xxx add_subs_to_videos /path/to/videos --model large-v3
 
 Each video gets a `.srt` file placed alongside it (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed.
 
-## HuggingFace setup
+## HuggingFace setup (optional)
 
 Diarization (speaker labels) requires accepting the pyannote model license:
 
