@@ -11,23 +11,24 @@ A Python CLI tool that crawls a directory for video files and generates `.srt` s
 
 ## Install
 
+**With pip:**
 ```bash
-uv sync
+pip install git+https://github.com/simnim/add_subs_to_videos.git
 ```
 
-`pywhispercpp` compiles a C++ extension at install time and requires CMake. On macOS, Metal acceleration is auto-detected. On Linux with CUDA, set `WHISPER_CUDA=1` before running `uv sync`.
+`pywhispercpp` compiles a C++ extension at install time and requires CMake. On macOS, Metal acceleration is auto-detected. On Linux with CUDA, set `WHISPER_CUDA=1` before installing:
+```bash
+WHISPER_CUDA=1 pip install git+https://github.com/simnim/add_subs_to_videos.git
+```
 
 ## Usage
 
 ```bash
-# Basic usage (--model is required)
-uv run add_subs_to_videos /path/to/videos --model large-v3
+# Basic usage
+add_subs_to_videos /path/to/videos
 
 # With diarization (speaker labels in output)
-HUGGINGFACE_TOKEN=hf_xxx uv run add_subs_to_videos /path/to/videos --model large-v3
-
-# Pin language, force re-run on existing subtitles
-uv run add_subs_to_videos /path/to/videos --model medium --language en --force
+HUGGINGFACE_TOKEN=hf_xxx add_subs_to_videos /path/to/videos --model large-v3
 ```
 
 Each video gets a `.srt` file placed alongside it (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed.
