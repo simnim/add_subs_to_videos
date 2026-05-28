@@ -5,11 +5,9 @@ description = "Add missing subtitles. Recursive video-to-SRT transcription using
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "whisperx",
+    "pywhispercpp",
     "torch>=2.0",
     "pyannote.audio>=3.1",
-    "faster-whisper",
-    "ctranslate2",
     "tqdm",
 ]
 
@@ -23,7 +21,7 @@ dev = ["pytest>=8.0", "pytest-mock"]
 pythonpath = ["src"]
 addopts = "-vvv -rA"
 markers = [
-    "integration: end-to-end tests that download real audio and run the full WhisperX pipeline (requires HUGGINGFACE_TOKEN)",
+    "integration: end-to-end tests that download real audio and run the full pipeline (requires HUGGINGFACE_TOKEN)",
 ]
 
 [tool.uv]

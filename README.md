@@ -2,7 +2,7 @@
 
 # Add subs to videos:
 
-A Python CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [WhisperX](https://github.com/m-bain/whisperX) for transcription and pyannote.audio for speaker diarization.
+A Python CLI tool that crawls a directory for video files and generates `.srt` subtitle sidecar files using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for transcription and pyannote.audio for speaker diarization.
 
 ## Motivation
 
@@ -15,28 +15,29 @@ A Python CLI tool that crawls a directory for video files and generates `.srt` s
 uv sync
 ```
 
+`pywhispercpp` compiles a C++ extension at install time and requires CMake. On macOS, Metal acceleration is auto-detected. On Linux with CUDA, set `WHISPER_CUDA=1` before running `uv sync`.
+
 ## Usage
 
 ```bash
 # Basic usage (--model is required)
 uv run crawl-srt /path/to/videos --model large-v3
 
-# With diarization (--model is required)
+# With diarization (speaker labels in output)
 HUGGINGFACE_TOKEN=hf_xxx uv run crawl-srt /path/to/videos --model large-v3
 
 # Pin language, force re-run on existing subtitles
 uv run crawl-srt /path/to/videos --model medium --language en --force
-
-# Lower batch size for CPU/MPS (avoids OOM)
-uv run crawl-srt ./videos --model small --batch-size 4
 ```
 
 Each video gets a `.srt` file placed alongside it (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed.
 
 ## HuggingFace setup
 
-Diarization requires accepting the pyannote model license:
+Diarization (speaker labels) requires accepting the pyannote model license:
 
 1. Visit `huggingface.co/pyannote/speaker-diarization-3.1` and click "Agree and access repository"
 2. Generate a token at `huggingface.co/settings/tokens`
 3. Pass it via `HUGGINGFACE_TOKEN=hf_xxx` or `--hf-token hf_xxx`
+
+Diarization is optional — omit the token to get transcription-only output without speaker labels.

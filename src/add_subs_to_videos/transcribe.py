@@ -5,7 +5,9 @@ import sys
 import time
 from pathlib import Path
 
-import whisperx
+import torch
+from pyannote.audio import Pipeline
+from pywhispercpp.model import Model
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -13,32 +15,45 @@ from .files import find_videos
 from .srt import segments_to_srt
 
 
+def _raw_to_dicts(raw_segments) -> list[dict]:
+    return [
+        {"start": seg.t0 / 100.0, "end": seg.t1 / 100.0, "text": seg.text.strip()}
+        for seg in raw_segments
+    ]
+
+
+def assign_speakers(segments: list[dict], diarization) -> list[dict]:
+    turns = [
+        (turn.start, turn.end, speaker)
+        for turn, _, speaker in diarization.itertracks(yield_label=True)
+    ]
+    for seg in segments:
+        best, best_overlap = None, 0.0
+        for ts, te, speaker in turns:
+            overlap = max(0.0, min(seg["end"], te) - max(seg["start"], ts))
+            if overlap > best_overlap:
+                best_overlap, best = overlap, speaker
+        if best is not None:
+            seg["speaker"] = best
+    return segments
+
+
 def transcribe_video(
     video_path: Path,
     *,
-    model: whisperx.Whisper,
+    model: Model,
     device: str,
-    hf_token: str | None,
+    diarize_pipeline,
     language: str | None,
-    batch_size: int,
 ) -> str:
-    audio = whisperx.load_audio(str(video_path))
+    raw_segs = model.transcribe(str(video_path), language=language or "")
+    segments = _raw_to_dicts(raw_segs)
 
-    result = model.transcribe(audio, batch_size=batch_size, language=language)
-    detected_lang = result["language"]
-    logging.debug("  detected language: %s", detected_lang)
+    if diarize_pipeline is not None:
+        diarization = diarize_pipeline(str(video_path))
+        segments = assign_speakers(segments, diarization)
 
-    align_model, metadata = whisperx.load_align_model(language_code=detected_lang, device=device)
-    result = whisperx.align(
-        result["segments"], align_model, metadata, audio, device, return_char_alignments=False
-    )
-
-    if hf_token is not None:
-        diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
-        diarize_segments = diarize_model(audio)
-        result = whisperx.assign_word_speakers(diarize_segments, result)
-
-    return segments_to_srt(result["segments"])
+    return segments_to_srt(segments)
 
 
 def process_directory(
@@ -50,7 +65,6 @@ def process_directory(
     hf_token: str | None,
     language: str | None,
     force: bool,
-    batch_size: int,
     show_progress: bool = True,
 ) -> None:
     videos = find_videos(root)
@@ -59,7 +73,15 @@ def process_directory(
         return
 
     logging.info("Loading model '%s' on %s (%s)", model_name, device, compute_type)
-    model = whisperx.load_model(model_name, device, compute_type=compute_type)
+    model = Model(model_name)
+
+    diarize_pipeline = None
+    if hf_token is not None:
+        logging.info("Loading diarization pipeline")
+        diarize_pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
+        )
+        diarize_pipeline.to(torch.device(device))
 
     failed: list[tuple[Path, str]] = []
     skipped = transcribed = 0
@@ -89,9 +111,8 @@ def process_directory(
                     video_path,
                     model=model,
                     device=device,
-                    hf_token=hf_token,
+                    diarize_pipeline=diarize_pipeline,
                     language=language,
-                    batch_size=batch_size,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
                 logging.info("DONE  %s -> %s", video_path.name, srt_path.name)

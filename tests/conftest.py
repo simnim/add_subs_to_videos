@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import pytest
@@ -19,25 +20,51 @@ def tmp_video_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def mock_whisperx(mocker):
+def mock_transcribe(mocker):
     """
-    Patches add_subs_to_videos.transcribe.whisperx with a MagicMock wired to
-    return canned diarized segments. Tests may override individual attributes.
+    Patches add_subs_to_videos.transcribe.Model, Pipeline, and assign_speakers
+    with canned outputs. Tests may override individual attributes.
     """
     fake_segments = [
         {"start": 1.0, "end": 3.5, "text": "Hello world", "speaker": "SPEAKER_00"},
         {"start": 4.0, "end": 6.0, "text": "How are you", "speaker": "SPEAKER_01"},
     ]
 
-    mx = mocker.MagicMock()
-    mx.load_audio.return_value = b"fake_audio"
-    mx.load_model.return_value = mx.model
-    mx.model.transcribe.return_value = {"language": "en", "segments": fake_segments}
-    mx.load_align_model.return_value = (mx.align_model, mx.metadata)
-    mx.align.return_value = {"segments": fake_segments}
-    mx.DiarizationPipeline.return_value = mx.diarize_pipeline
-    mx.diarize_pipeline.return_value = mx.diarize_segments
-    mx.assign_word_speakers.return_value = {"segments": fake_segments}
+    def make_seg(start, end, text):
+        s = mocker.MagicMock()
+        s.t0 = int(start * 100)
+        s.t1 = int(end * 100)
+        s.text = text
+        return s
 
-    mocker.patch("add_subs_to_videos.transcribe.whisperx", mx)
-    return mx
+    raw_segs = [
+        make_seg(1.0, 3.5, "Hello world"),
+        make_seg(4.0, 6.0, "How are you"),
+    ]
+
+    mock_model_instance = mocker.MagicMock()
+    mock_model_instance.transcribe.return_value = raw_segs
+    mock_model_cls = mocker.patch(
+        "add_subs_to_videos.transcribe.Model", return_value=mock_model_instance
+    )
+
+    mock_pipeline_instance = mocker.MagicMock()
+    mock_pipeline_instance.return_value = mocker.MagicMock()
+    mock_pipeline_cls = mocker.MagicMock()
+    mock_pipeline_cls.from_pretrained.return_value = mock_pipeline_instance
+    mocker.patch("add_subs_to_videos.transcribe.Pipeline", mock_pipeline_cls)
+
+    assign_speakers_mock = mocker.patch(
+        "add_subs_to_videos.transcribe.assign_speakers",
+        return_value=fake_segments,
+    )
+
+    return types.SimpleNamespace(
+        model_cls=mock_model_cls,
+        model=mock_model_instance,
+        pipeline_cls=mock_pipeline_cls,
+        pipeline=mock_pipeline_instance,
+        assign_speakers_mock=assign_speakers_mock,
+        fake_segments=fake_segments,
+        raw_segs=raw_segs,
+    )

@@ -11,7 +11,7 @@ from .transcribe import process_directory
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="crawl_srt",
-        description="Recursively transcribe video files to .srt using WhisperX + speaker diarization",
+        description="Recursively transcribe video files to .srt using whisper.cpp + speaker diarization",
     )
     parser.add_argument("directory", type=Path, help="Root directory to crawl for video files")
     parser.add_argument(
@@ -34,13 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="HuggingFace token for diarization. Overrides HUGGINGFACE_TOKEN env var.",
     )
     parser.add_argument("--force", action="store_true", help="Re-transcribe even if .srt exists")
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=16,
-        dest="batch_size",
-        help="Transcription batch size (default: 16; lower to 4-8 on CPU/MPS)",
-    )
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
         "--quiet", "-q",
@@ -83,7 +76,6 @@ def main() -> None:
         hf_token=hf_token,
         language=args.language,
         force=args.force,
-        batch_size=args.batch_size,
         show_progress=not args.quiet,
     )
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -68,10 +67,11 @@ class TestSegmentsToSrt:
             "SPEAKER_00: Hello world\n"
         )
 
-    def test_missing_speaker_falls_back_to_unknown(self):
+    def test_missing_speaker_omits_prefix(self):
         segs = [{"start": 0.5, "end": 1.5, "text": "No speaker here"}]
         result = segments_to_srt(segs)
-        assert "UNKNOWN: No speaker here" in result
+        assert "No speaker here" in result
+        assert "UNKNOWN" not in result
 
     def test_multiple_segments_sequential_index(self):
         segs = [
@@ -89,7 +89,6 @@ class TestSegmentsToSrt:
             {"start": 1.5, "end": 2.5, "text": "Second", "speaker": "SPEAKER_01"},
         ]
         result = segments_to_srt(segs)
-        # Each cue block ends with a blank line (empty string between cues)
         assert "\n\n" in result
 
     def test_empty_segments_do_not_consume_index(self):
@@ -98,7 +97,6 @@ class TestSegmentsToSrt:
             {"start": 1.5, "end": 2.5, "text": "Second", "speaker": "SPEAKER_01"},
         ]
         result = segments_to_srt(segs)
-        # Only one cue, and it must have index 1
         assert result.startswith("1\n")
         assert "2\n" not in result
 
@@ -112,7 +110,6 @@ class TestSegmentsToSrt:
         segs = [{"start": 1.5, "end": 2.5, "text": "Check", "speaker": "SPEAKER_00"}]
         result = segments_to_srt(segs)
         assert "," in result
-        # The timestamp line must use comma, not period
         timestamp_line = result.split("\n")[1]
         assert "." not in timestamp_line
 
@@ -152,16 +149,6 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args(["/some/dir", "--model", "small", "--force"])
         assert args.force is True
-
-    def test_batch_size_defaults_to_16(self):
-        parser = build_parser()
-        args = parser.parse_args(["/some/dir", "--model", "small"])
-        assert args.batch_size == 16
-
-    def test_batch_size_override(self):
-        parser = build_parser()
-        args = parser.parse_args(["/some/dir", "--model", "small", "--batch-size", "4"])
-        assert args.batch_size == 4
 
     def test_language_defaults_to_none(self):
         parser = build_parser()
@@ -293,15 +280,16 @@ class TestDetectDevice:
         assert device == "cuda"
         assert compute_type == "float16"
 
-    def test_mps_falls_back_to_cpu(self, mocker):
+    def test_mps_detected(self, mocker):
         torch_mock = mocker.MagicMock()
         torch_mock.cuda.is_available.return_value = False
+        torch_mock.backends.mps.is_available.return_value = True
         mocker.patch.dict(sys.modules, {"torch": torch_mock})
         import importlib
         importlib.reload(_device_mod)
         device, compute_type = _device_mod.detect_device()
-        assert device == "cpu"
-        assert compute_type == "int8"
+        assert device == "mps"
+        assert compute_type == "float16"
 
     def test_cpu_fallback(self, mocker):
         torch_mock = mocker.MagicMock()
@@ -329,80 +317,82 @@ class TestDetectDevice:
 
 
 class TestTranscribeVideo:
-    def test_returns_srt_string(self, tmp_path, mock_whisperx):
+    def test_returns_srt_string(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         result = transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_tok", language=None, batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=mock_transcribe.pipeline,
+            language=None,
         )
         assert isinstance(result, str)
         assert "SPEAKER_00" in result
 
-    def test_pipeline_call_order(self, tmp_path, mock_whisperx):
+    def test_pipeline_call_order(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_tok", language=None, batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=mock_transcribe.pipeline,
+            language=None,
         )
-        mock_whisperx.load_audio.assert_called_once_with(str(video))
-        mock_whisperx.model.transcribe.assert_called_once()
-        mock_whisperx.load_align_model.assert_called_once()
-        mock_whisperx.align.assert_called_once()
-        mock_whisperx.DiarizationPipeline.assert_called_once()
-        mock_whisperx.assign_word_speakers.assert_called_once()
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
+        mock_transcribe.pipeline.assert_called_once_with(str(video))
+        mock_transcribe.assign_speakers_mock.assert_called_once()
 
-    def test_language_passed_to_transcribe(self, tmp_path, mock_whisperx):
+    def test_language_passed_to_transcribe(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_tok", language="fr", batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=None,
+            language="fr",
         )
-        _, kwargs = mock_whisperx.model.transcribe.call_args
-        assert kwargs.get("language") == "fr"
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="fr")
 
-    def test_language_none_passed_through(self, tmp_path, mock_whisperx):
+    def test_language_none_passed_as_empty_string(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_tok", language=None, batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=None,
+            language=None,
         )
-        _, kwargs = mock_whisperx.model.transcribe.call_args
-        assert kwargs.get("language") is None
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
 
-    def test_hf_token_forwarded_to_diarization(self, tmp_path, mock_whisperx):
+    def test_diarize_pipeline_called_when_provided(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_secret", language=None, batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=mock_transcribe.pipeline,
+            language=None,
         )
-        mock_whisperx.DiarizationPipeline.assert_called_once_with(
-            use_auth_token="hf_secret", device="cpu"
-        )
+        mock_transcribe.pipeline.assert_called_once_with(str(video))
+        mock_transcribe.assign_speakers_mock.assert_called_once()
 
-    def test_no_hf_token_skips_diarization(self, tmp_path, mock_whisperx):
+    def test_diarize_skipped_when_pipeline_is_none(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token=None, language=None, batch_size=16,
+            video,
+            model=mock_transcribe.model,
+            device="cpu",
+            diarize_pipeline=None,
+            language=None,
         )
-        mock_whisperx.DiarizationPipeline.assert_not_called()
-        mock_whisperx.assign_word_speakers.assert_not_called()
-
-    def test_batch_size_forwarded_to_transcribe(self, tmp_path, mock_whisperx):
-        video = tmp_path / "clip.mp4"
-        video.touch()
-        transcribe_video(
-            video, model=mock_whisperx.model, device="cpu",
-            hf_token="hf_tok", language=None, batch_size=4,
-        )
-        _, kwargs = mock_whisperx.model.transcribe.call_args
-        assert kwargs.get("batch_size") == 4
+        mock_transcribe.pipeline.assert_not_called()
+        mock_transcribe.assign_speakers_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -417,27 +407,26 @@ _COMMON_KWARGS = dict(
     hf_token="hf_tok",
     language=None,
     force=False,
-    batch_size=16,
     show_progress=False,
 )
 
 
 class TestProcessDirectory:
-    def test_no_videos_skips_model_load(self, tmp_path, mock_whisperx):
+    def test_no_videos_skips_model_load(self, tmp_path, mock_transcribe):
         process_directory(tmp_path, **_COMMON_KWARGS)
-        mock_whisperx.load_model.assert_not_called()
+        mock_transcribe.model_cls.assert_not_called()
 
-    def test_model_loaded_once_for_multiple_videos(self, tmp_video_dir, mock_whisperx):
+    def test_model_loaded_once_for_multiple_videos(self, tmp_video_dir, mock_transcribe):
         process_directory(tmp_video_dir, **_COMMON_KWARGS)
-        mock_whisperx.load_model.assert_called_once()
+        mock_transcribe.model_cls.assert_called_once()
 
-    def test_srt_written_next_to_video(self, tmp_path, mock_whisperx):
+    def test_srt_written_next_to_video(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         process_directory(tmp_path, **_COMMON_KWARGS)
         assert (tmp_path / "clip.srt").exists()
 
-    def test_existing_srt_skipped_without_force(self, tmp_path, mock_whisperx):
+    def test_existing_srt_skipped_without_force(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         srt = tmp_path / "clip.srt"
@@ -445,10 +434,10 @@ class TestProcessDirectory:
 
         process_directory(tmp_path, **_COMMON_KWARGS)
 
-        mock_whisperx.load_audio.assert_not_called()
+        mock_transcribe.model.transcribe.assert_not_called()
         assert srt.read_text(encoding="utf-8") == "existing content"
 
-    def test_existing_srt_overwritten_with_force(self, tmp_path, mock_whisperx):
+    def test_existing_srt_overwritten_with_force(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
         srt = tmp_path / "clip.srt"
@@ -456,51 +445,54 @@ class TestProcessDirectory:
 
         process_directory(tmp_path, **{**_COMMON_KWARGS, "force": True})
 
-        mock_whisperx.load_audio.assert_called_once()
+        mock_transcribe.model.transcribe.assert_called_once()
         assert srt.read_text(encoding="utf-8") != "old content"
 
-    def test_failed_file_does_not_abort_batch(self, tmp_path, mock_whisperx):
+    def test_failed_file_does_not_abort_batch(self, tmp_path, mock_transcribe):
         (tmp_path / "a.mp4").touch()
         (tmp_path / "b.mp4").touch()
 
-        call_count = 0
-
-        def fail_on_first(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("audio decode failed")
-            return b"audio"
-
-        mock_whisperx.load_audio.side_effect = fail_on_first
+        mock_transcribe.model.transcribe.side_effect = [
+            RuntimeError("transcribe failed"),
+            mock_transcribe.raw_segs,
+        ]
 
         with pytest.raises(SystemExit) as exc_info:
             process_directory(tmp_path, **_COMMON_KWARGS)
 
         assert exc_info.value.code == 1
-        # The second file should still have been attempted
-        assert call_count == 2
+        assert mock_transcribe.model.transcribe.call_count == 2
 
-    def test_all_fail_exits_1(self, tmp_path, mock_whisperx):
+    def test_all_fail_exits_1(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()
-        mock_whisperx.load_audio.side_effect = RuntimeError("boom")
+        mock_transcribe.model.transcribe.side_effect = RuntimeError("boom")
 
         with pytest.raises(SystemExit) as exc_info:
             process_directory(tmp_path, **_COMMON_KWARGS)
 
         assert exc_info.value.code == 1
 
-    def test_all_succeed_no_exit(self, tmp_path, mock_whisperx):
+    def test_all_succeed_no_exit(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()
-        # Should return normally (no SystemExit)
         process_directory(tmp_path, **_COMMON_KWARGS)
 
-    def test_srt_content_is_utf8(self, tmp_path, mock_whisperx):
-        # Inject a segment with non-ASCII text
-        mock_whisperx.assign_word_speakers.return_value = {
-            "segments": [{"start": 0.0, "end": 1.0, "text": "Héllo wörld", "speaker": "SPEAKER_00"}]
-        }
+    def test_srt_content_is_utf8(self, tmp_path, mock_transcribe):
+        mock_transcribe.assign_speakers_mock.return_value = [
+            {"start": 0.0, "end": 1.0, "text": "Héllo wörld", "speaker": "SPEAKER_00"}
+        ]
         (tmp_path / "clip.mp4").touch()
         process_directory(tmp_path, **_COMMON_KWARGS)
         content = (tmp_path / "clip.srt").read_text(encoding="utf-8")
         assert "Héllo wörld" in content
+
+    def test_hf_token_creates_diarization_pipeline(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        mock_transcribe.pipeline_cls.from_pretrained.assert_called_once_with(
+            "pyannote/speaker-diarization-3.1", use_auth_token="hf_tok"
+        )
+
+    def test_no_hf_token_skips_pipeline_creation(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **{**_COMMON_KWARGS, "hf_token": None})
+        mock_transcribe.pipeline_cls.from_pretrained.assert_not_called()

@@ -72,7 +72,6 @@ def test_srt_file_is_created(downloaded_audio, hf_token):
         hf_token=hf_token,
         language="en",
         force=True,
-        batch_size=16,
     )
 
     assert srt_path.exists(), ".srt file was not created"
@@ -94,7 +93,6 @@ def test_srt_content_is_valid(downloaded_audio, hf_token):
             hf_token=hf_token,
             language="en",
             force=True,
-            batch_size=16,
         )
 
     content = srt_path.read_text(encoding="utf-8")
@@ -125,7 +123,6 @@ def test_srt_contains_speaker_labels(downloaded_audio, hf_token):
             hf_token=hf_token,
             language="en",
             force=True,
-            batch_size=16,
         )
 
     content = srt_path.read_text(encoding="utf-8")
@@ -133,13 +130,10 @@ def test_srt_contains_speaker_labels(downloaded_audio, hf_token):
 
 
 @pytest.mark.integration
-def test_skip_logic_honours_existing_srt(downloaded_audio, hf_token, mocker):
+def test_skip_logic_honours_existing_srt(downloaded_audio, hf_token):
     """process_directory skips a file that already has a .srt (no --force)."""
     srt_path = downloaded_audio.with_suffix(".srt")
     srt_path.write_text("sentinel content", encoding="utf-8")
-
-    load_audio_spy = mocker.patch("add_subs_to_videos.transcribe.whisperx.load_audio", wraps=None)
-    # wraps=None means the mock returns MagicMock but we just want call count
 
     device, compute_type = detect_device()
     process_directory(
@@ -149,10 +143,8 @@ def test_skip_logic_honours_existing_srt(downloaded_audio, hf_token, mocker):
         compute_type=compute_type,
         hf_token=hf_token,
         language="en",
-        force=False,   # do NOT force
-        batch_size=16,
+        force=False,
     )
 
-    load_audio_spy.assert_not_called()
     # Original content must be preserved
     assert srt_path.read_text(encoding="utf-8") == "sentinel content"

@@ -4,15 +4,14 @@ import os
 
 
 def detect_device() -> tuple[str, str]:
-    """Returns (device, compute_type). Priority: CUDA > CPU.
-
-    MPS is skipped: whisperx's alignment model raises ValueError: unsupported device mps.
-    """
+    """Returns (device, compute_type). Priority: CUDA > MPS > CPU."""
     try:
         import torch
 
         if torch.cuda.is_available():
             return "cuda", "float16"
+        if torch.backends.mps.is_available():
+            return "mps", "float16"
     except ImportError:
         pass
     return "cpu", "int8"
