@@ -3,7 +3,7 @@ name = "add_subs_to_videos"
 version = "0.1.0"
 description = "Add missing subtitles. Recursive video-to-SRT transcription using WhisperX and speaker diarization"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "pywhispercpp",
     "torch>=2.0",
@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 crawl-srt = "add_subs_to_videos.cli:main"
+add_subs_to_videos = "add_subs_to_videos.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-mock"]
