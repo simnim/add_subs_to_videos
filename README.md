@@ -21,13 +21,13 @@ uv sync
 
 ```bash
 # Basic usage (--model is required)
-uv run crawl-srt /path/to/videos --model large-v3
+uv run add_subs_to_videos /path/to/videos --model large-v3
 
 # With diarization (speaker labels in output)
-HUGGINGFACE_TOKEN=hf_xxx uv run crawl-srt /path/to/videos --model large-v3
+HUGGINGFACE_TOKEN=hf_xxx uv run add_subs_to_videos /path/to/videos --model large-v3
 
 # Pin language, force re-run on existing subtitles
-uv run crawl-srt /path/to/videos --model medium --language en --force
+uv run add_subs_to_videos /path/to/videos --model medium --language en --force
 ```
 
 Each video gets a `.srt` file placed alongside it (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed.
