@@ -21,10 +21,9 @@ def segments_to_srt(segments: list[dict]) -> str:
             continue
         start_ts = format_srt_timestamp(seg["start"])
         end_ts = format_srt_timestamp(seg["end"])
-        speaker = seg.get("speaker")
         lines.append(str(index))
         lines.append(f"{start_ts} --> {end_ts}")
-        lines.append(f"{speaker}: {text}" if speaker else text)
+        lines.append(text)
         lines.append("")
         index += 1
     return "\n".join(lines)

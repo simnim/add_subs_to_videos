@@ -21,14 +21,7 @@ def tmp_video_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mock_transcribe(mocker):
-    """
-    Patches add_subs_to_videos.transcribe.Model, Pipeline, and assign_speakers
-    with canned outputs. Tests may override individual attributes.
-    """
-    fake_segments = [
-        {"start": 1.0, "end": 3.5, "text": "Hello world", "speaker": "SPEAKER_00"},
-        {"start": 4.0, "end": 6.0, "text": "How are you", "speaker": "SPEAKER_01"},
-    ]
+    """Patches add_subs_to_videos.transcribe.Model with canned outputs."""
 
     def make_seg(start, end, text):
         s = mocker.MagicMock()
@@ -48,23 +41,8 @@ def mock_transcribe(mocker):
         "add_subs_to_videos.transcribe.Model", return_value=mock_model_instance
     )
 
-    mock_pipeline_instance = mocker.MagicMock()
-    mock_pipeline_instance.return_value = mocker.MagicMock()
-    mock_pipeline_cls = mocker.MagicMock()
-    mock_pipeline_cls.from_pretrained.return_value = mock_pipeline_instance
-    mocker.patch("add_subs_to_videos.transcribe.Pipeline", mock_pipeline_cls)
-
-    assign_speakers_mock = mocker.patch(
-        "add_subs_to_videos.transcribe.assign_speakers",
-        return_value=fake_segments,
-    )
-
     return types.SimpleNamespace(
         model_cls=mock_model_cls,
         model=mock_model_instance,
-        pipeline_cls=mock_pipeline_cls,
-        pipeline=mock_pipeline_instance,
-        assign_speakers_mock=assign_speakers_mock,
-        fake_segments=fake_segments,
         raw_segs=raw_segs,
     )

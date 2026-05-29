@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-import add_subs_to_videos.device as _device_mod
 from add_subs_to_videos.cli import build_parser
-from add_subs_to_videos.device import detect_device, resolve_hf_token
 from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
 from add_subs_to_videos.transcribe import process_directory, transcribe_video
@@ -55,28 +52,22 @@ class TestSegmentsToSrt:
         assert segments_to_srt([]) == ""
 
     def test_whitespace_only_text_is_skipped(self):
-        segs = [{"start": 0.0, "end": 1.0, "text": "   ", "speaker": "SPEAKER_00"}]
+        segs = [{"start": 0.0, "end": 1.0, "text": "   "}]
         assert segments_to_srt(segs) == ""
 
     def test_single_segment(self):
-        segs = [{"start": 1.0, "end": 3.5, "text": "Hello world", "speaker": "SPEAKER_00"}]
+        segs = [{"start": 1.0, "end": 3.5, "text": "Hello world"}]
         result = segments_to_srt(segs)
         assert result == (
             "1\n"
             "00:00:01,000 --> 00:00:03,500\n"
-            "SPEAKER_00: Hello world\n"
+            "Hello world\n"
         )
-
-    def test_missing_speaker_omits_prefix(self):
-        segs = [{"start": 0.5, "end": 1.5, "text": "No speaker here"}]
-        result = segments_to_srt(segs)
-        assert "No speaker here" in result
-        assert "UNKNOWN" not in result
 
     def test_multiple_segments_sequential_index(self):
         segs = [
-            {"start": 0.0, "end": 1.0, "text": "First", "speaker": "SPEAKER_00"},
-            {"start": 1.5, "end": 2.5, "text": "Second", "speaker": "SPEAKER_01"},
+            {"start": 0.0, "end": 1.0, "text": "First"},
+            {"start": 1.5, "end": 2.5, "text": "Second"},
         ]
         result = segments_to_srt(segs)
         lines = result.split("\n")
@@ -85,29 +76,29 @@ class TestSegmentsToSrt:
 
     def test_blank_line_between_cues(self):
         segs = [
-            {"start": 0.0, "end": 1.0, "text": "First", "speaker": "SPEAKER_00"},
-            {"start": 1.5, "end": 2.5, "text": "Second", "speaker": "SPEAKER_01"},
+            {"start": 0.0, "end": 1.0, "text": "First"},
+            {"start": 1.5, "end": 2.5, "text": "Second"},
         ]
         result = segments_to_srt(segs)
         assert "\n\n" in result
 
     def test_empty_segments_do_not_consume_index(self):
         segs = [
-            {"start": 0.0, "end": 1.0, "text": "  ", "speaker": "SPEAKER_00"},
-            {"start": 1.5, "end": 2.5, "text": "Second", "speaker": "SPEAKER_01"},
+            {"start": 0.0, "end": 1.0, "text": "  "},
+            {"start": 1.5, "end": 2.5, "text": "Second"},
         ]
         result = segments_to_srt(segs)
         assert result.startswith("1\n")
         assert "2\n" not in result
 
     def test_text_is_stripped(self):
-        segs = [{"start": 0.0, "end": 1.0, "text": "  padded  ", "speaker": "SPEAKER_00"}]
+        segs = [{"start": 0.0, "end": 1.0, "text": "  padded  "}]
         result = segments_to_srt(segs)
-        assert "SPEAKER_00: padded" in result
+        assert "padded" in result
         assert "  padded  " not in result
 
     def test_comma_used_as_ms_separator(self):
-        segs = [{"start": 1.5, "end": 2.5, "text": "Check", "speaker": "SPEAKER_00"}]
+        segs = [{"start": 1.5, "end": 2.5, "text": "Check"}]
         result = segments_to_srt(segs)
         assert "," in result
         timestamp_line = result.split("\n")[1]
@@ -160,16 +151,6 @@ class TestBuildParser:
         args = parser.parse_args(["/some/dir", "--model", "small", "--language", "en"])
         assert args.language == "en"
 
-    def test_hf_token_stored_as_hf_token(self):
-        parser = build_parser()
-        args = parser.parse_args(["/some/dir", "--model", "small", "--hf-token", "hf_abc"])
-        assert args.hf_token == "hf_abc"
-
-    def test_hf_token_defaults_to_none(self):
-        parser = build_parser()
-        args = parser.parse_args(["/some/dir", "--model", "small"])
-        assert args.hf_token is None
-
     def test_quiet_flag(self):
         parser = build_parser()
         args = parser.parse_args(["/some/dir", "--model", "small", "--quiet"])
@@ -186,34 +167,6 @@ class TestBuildParser:
         parser = build_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["/some/dir", "--model", "small", "--quiet", "--verbose"])
-
-
-# ---------------------------------------------------------------------------
-# resolve_hf_token
-# ---------------------------------------------------------------------------
-
-
-class TestResolveHfToken:
-    def test_cli_token_returned(self, monkeypatch):
-        monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-        assert resolve_hf_token("hf_cli") == "hf_cli"
-
-    def test_env_var_used_when_cli_is_none(self, monkeypatch):
-        monkeypatch.setenv("HUGGINGFACE_TOKEN", "hf_env")
-        assert resolve_hf_token(None) == "hf_env"
-
-    def test_cli_wins_over_env_var(self, monkeypatch):
-        monkeypatch.setenv("HUGGINGFACE_TOKEN", "hf_env")
-        assert resolve_hf_token("hf_cli") == "hf_cli"
-
-    def test_neither_provided_returns_none(self, monkeypatch):
-        monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
-        assert resolve_hf_token(None) is None
-
-    def test_empty_cli_falls_through_to_env(self, monkeypatch):
-        # Empty string is falsy — env var should be used
-        monkeypatch.setenv("HUGGINGFACE_TOKEN", "hf_env")
-        assert resolve_hf_token("") == "hf_env"
 
 
 # ---------------------------------------------------------------------------
@@ -265,53 +218,6 @@ class TestFindVideos:
 
 
 # ---------------------------------------------------------------------------
-# detect_device
-# ---------------------------------------------------------------------------
-
-
-class TestDetectDevice:
-    def test_cuda_available(self, mocker):
-        torch_mock = mocker.MagicMock()
-        torch_mock.cuda.is_available.return_value = True
-        mocker.patch.dict(sys.modules, {"torch": torch_mock})
-        import importlib
-        importlib.reload(_device_mod)
-        device, compute_type = _device_mod.detect_device()
-        assert device == "cuda"
-        assert compute_type == "float16"
-
-    def test_mps_detected(self, mocker):
-        torch_mock = mocker.MagicMock()
-        torch_mock.cuda.is_available.return_value = False
-        torch_mock.backends.mps.is_available.return_value = True
-        mocker.patch.dict(sys.modules, {"torch": torch_mock})
-        import importlib
-        importlib.reload(_device_mod)
-        device, compute_type = _device_mod.detect_device()
-        assert device == "mps"
-        assert compute_type == "float16"
-
-    def test_cpu_fallback(self, mocker):
-        torch_mock = mocker.MagicMock()
-        torch_mock.cuda.is_available.return_value = False
-        torch_mock.backends.mps.is_available.return_value = False
-        mocker.patch.dict(sys.modules, {"torch": torch_mock})
-        import importlib
-        importlib.reload(_device_mod)
-        device, compute_type = _device_mod.detect_device()
-        assert device == "cpu"
-        assert compute_type == "int8"
-
-    def test_torch_import_error_falls_back_to_cpu(self, mocker):
-        mocker.patch.dict(sys.modules, {"torch": None})
-        import importlib
-        importlib.reload(_device_mod)
-        device, compute_type = _device_mod.detect_device()
-        assert device == "cpu"
-        assert compute_type == "int8"
-
-
-# ---------------------------------------------------------------------------
 # transcribe_video
 # ---------------------------------------------------------------------------
 
@@ -320,79 +226,27 @@ class TestTranscribeVideo:
     def test_returns_srt_string(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
-        result = transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=mock_transcribe.pipeline,
-            language=None,
-        )
+        result = transcribe_video(video, model=mock_transcribe.model, language=None)
         assert isinstance(result, str)
-        assert "SPEAKER_00" in result
+        assert "-->" in result
 
     def test_pipeline_call_order(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
-        transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=mock_transcribe.pipeline,
-            language=None,
-        )
+        transcribe_video(video, model=mock_transcribe.model, language=None)
         mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
-        mock_transcribe.pipeline.assert_called_once_with(str(video))
-        mock_transcribe.assign_speakers_mock.assert_called_once()
 
     def test_language_passed_to_transcribe(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
-        transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=None,
-            language="fr",
-        )
+        transcribe_video(video, model=mock_transcribe.model, language="fr")
         mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="fr")
 
     def test_language_none_passed_as_empty_string(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
-        transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=None,
-            language=None,
-        )
+        transcribe_video(video, model=mock_transcribe.model, language=None)
         mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
-
-    def test_diarize_pipeline_called_when_provided(self, tmp_path, mock_transcribe):
-        video = tmp_path / "clip.mp4"
-        video.touch()
-        transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=mock_transcribe.pipeline,
-            language=None,
-        )
-        mock_transcribe.pipeline.assert_called_once_with(str(video))
-        mock_transcribe.assign_speakers_mock.assert_called_once()
-
-    def test_diarize_skipped_when_pipeline_is_none(self, tmp_path, mock_transcribe):
-        video = tmp_path / "clip.mp4"
-        video.touch()
-        transcribe_video(
-            video,
-            model=mock_transcribe.model,
-            device="cpu",
-            diarize_pipeline=None,
-            language=None,
-        )
-        mock_transcribe.pipeline.assert_not_called()
-        mock_transcribe.assign_speakers_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +256,6 @@ class TestTranscribeVideo:
 
 _COMMON_KWARGS = dict(
     model_name="small",
-    device="cpu",
-    compute_type="int8",
-    hf_token="hf_tok",
     language=None,
     force=False,
     show_progress=False,
@@ -477,22 +328,21 @@ class TestProcessDirectory:
         process_directory(tmp_path, **_COMMON_KWARGS)
 
     def test_srt_content_is_utf8(self, tmp_path, mock_transcribe):
-        mock_transcribe.assign_speakers_mock.return_value = [
-            {"start": 0.0, "end": 1.0, "text": "Héllo wörld", "speaker": "SPEAKER_00"}
-        ]
+        def make_seg(start, end, text):
+            s = mock_transcribe.model.transcribe.return_value[0].__class__()
+            s.t0 = int(start * 100)
+            s.t1 = int(end * 100)
+            s.text = text
+            return s
+
+        from unittest.mock import MagicMock
+        seg = MagicMock()
+        seg.t0 = 0
+        seg.t1 = 100
+        seg.text = "Héllo wörld"
+        mock_transcribe.model.transcribe.return_value = [seg]
+
         (tmp_path / "clip.mp4").touch()
         process_directory(tmp_path, **_COMMON_KWARGS)
         content = (tmp_path / "clip.srt").read_text(encoding="utf-8")
         assert "Héllo wörld" in content
-
-    def test_hf_token_creates_diarization_pipeline(self, tmp_path, mock_transcribe):
-        (tmp_path / "clip.mp4").touch()
-        process_directory(tmp_path, **_COMMON_KWARGS)
-        mock_transcribe.pipeline_cls.from_pretrained.assert_called_once_with(
-            "pyannote/speaker-diarization-3.1", use_auth_token="hf_tok"
-        )
-
-    def test_no_hf_token_skips_pipeline_creation(self, tmp_path, mock_transcribe):
-        (tmp_path / "clip.mp4").touch()
-        process_directory(tmp_path, **{**_COMMON_KWARGS, "hf_token": None})
-        mock_transcribe.pipeline_cls.from_pretrained.assert_not_called()
