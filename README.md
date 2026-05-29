@@ -13,8 +13,7 @@ A Python CLI tool that crawls a directory for video files and generates `.srt` s
 * You're missing subtitles for all those videos you have lying around
 	* There's many of them in nested directories, too many to think about.
 * You want to run a simple command to fix all of them in one go
-	* Each file is only transcribed once
-	* Even with re-runs we only write files when missing
+	* Each file is only transcribed once so this is very fast to run incrementally and repeatedly
 
 ## Install
 
