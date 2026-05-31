@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Purple rounded square background -->
+  <rect width="256" height="256" rx="52" fill="#7C3AED"/>
+
+  <!-- Film strip: white outer frame -->
+  <rect x="40" y="56" width="176" height="118" rx="10" fill="white"/>
+
+  <!-- Film sprocket holes (left side) -->
+  <rect x="48" y="70" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="48" y="99" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="48" y="128" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="48" y="155" width="10" height="10" rx="3" fill="#7C3AED"/>
+
+  <!-- Film sprocket holes (right side) -->
+  <rect x="198" y="70" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="198" y="99" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="198" y="128" width="10" height="16" rx="3" fill="#7C3AED"/>
+  <rect x="198" y="155" width="10" height="10" rx="3" fill="#7C3AED"/>
+
+  <!-- Inner screen area (darker purple) -->
+  <rect x="66" y="68" width="124" height="94" rx="6" fill="#5B21B6"/>
+
+  <!-- Subtitle text lines (below the film strip) -->
+  <rect x="40" y="190" width="176" height="18" rx="9" fill="white"/>
+  <rect x="62" y="218" width="132" height="18" rx="9" fill="rgba(255,255,255,0.65)"/>
+</svg>

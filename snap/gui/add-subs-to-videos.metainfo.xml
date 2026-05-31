@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>add-subs-to-videos</id>
+  <name>Add Subs to Videos</name>
+  <summary>Recursive video-to-SRT transcription using whisper.cpp</summary>
+  <description>
+    <p>
+      Crawls a directory recursively, transcribes every video it finds using
+      whisper.cpp (on-device, fully private), and writes an .srt sidecar file
+      next to each one. Already-transcribed files are skipped.
+    </p>
+    <p>Supports .mp4, .mkv, .avi, .mov, .m4v, .webm, .ts, .flv, and more.</p>
+  </description>
+  <url type="homepage">https://github.com/simnim/add_subs_to_videos</url>
+  <url type="bugtracker">https://github.com/simnim/add_subs_to_videos/issues</url>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <keywords>
+    <keyword>subtitles</keyword>
+    <keyword>transcription</keyword>
+    <keyword>whisper</keyword>
+    <keyword>srt</keyword>
+    <keyword>video</keyword>
+  </keywords>
+  <provides>
+    <binary>add_subs_to_videos</binary>
+  </provides>
+</component>

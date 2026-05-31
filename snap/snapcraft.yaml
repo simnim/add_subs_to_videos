@@ -1,0 +1,48 @@
+name: add-subs-to-videos
+base: core24
+adopt-info: add-subs-to-videos
+summary: Recursive video-to-SRT transcription using whisper.cpp
+description: |
+  Crawls a directory recursively, transcribes every video it finds using
+  whisper.cpp (on-device, fully private) and writes an .srt sidecar file
+  next to each one. Already-transcribed files are skipped, so re-running
+  is fast and safe.
+
+  Supports .mp4, .mkv, .avi, .mov, .m4v, .webm, .ts, .flv, and more.
+
+  Usage:
+    add-subs-to-videos /path/to/videos
+    add-subs-to-videos /path/to/videos --model large-v3 --language en
+    add-subs-to-videos /path/to/videos --force
+
+icon: assets/icon.svg
+grade: stable
+confinement: strict
+
+apps:
+  add-subs-to-videos:
+    command: bin/add_subs_to_videos
+    plugs:
+      - home
+      - removable-media
+      - network         # whisper.cpp downloads model weights on first use
+
+parts:
+  add-subs-to-videos:
+    plugin: python
+    source: .
+    build-packages:
+      - cmake
+      - python3-dev
+      - libffi-dev
+      - pkg-config
+    stage-packages:
+      - ffmpeg
+      - libgomp1        # OpenMP runtime required by whisper.cpp
+    override-pull: |
+      craftctl default
+      VER=$(python3 -c "
+  import tomllib, pathlib
+  print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+  ")
+      craftctl set version="$VER"
