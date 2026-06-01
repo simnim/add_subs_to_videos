@@ -9,8 +9,12 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+gui = ["pyside6"]
+
 [project.scripts]
 add_subs_to_videos = "add_subs_to_videos.cli:main"
+add-subs-to-videos-gui = "add_subs_to_videos.gui:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-mock"]
