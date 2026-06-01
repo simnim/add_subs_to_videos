@@ -1,6 +1,6 @@
 [project]
 name = "add_subs_to_videos"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add missing subtitles. Recursive video-to-SRT transcription using whisper.cpp"
 readme = "README.md"
 requires-python = ">=3.12"
