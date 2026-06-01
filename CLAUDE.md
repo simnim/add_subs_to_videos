@@ -29,6 +29,23 @@ uv run add_subs_to_videos /path/to/videos --model medium --language en --force
 
 Output: a `.srt` file placed next to each video (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed.
 
+## Publishing
+
+Releases are triggered by creating a GitHub Release. Two workflows fire automatically:
+
+- **`.github/workflows/publish.yml`** — builds a wheel with `uv build` and uploads to PyPI using the `PYPI_TOKEN` secret (or OIDC trusted publishing with `--trusted-publishing always`)
+- **`.github/workflows/snap.yml`** — builds the snap with `snapcore/action-build` and publishes to the Snap Store using the `SNAPCRAFT_STORE_CREDENTIALS` secret
+
+Snap packaging lives in `snap/snapcraft.yaml`. The `python` plugin compiles `pywhispercpp` (C++ extension) during the snap build and bundles `ffmpeg` via `stage-packages`, so the snap is fully self-contained.
+
+One-time setup before first release:
+```bash
+snap install snapcraft --classic
+snapcraft login
+snapcraft register add-subs-to-videos
+snapcraft export-login ...   # paste output into SNAPCRAFT_STORE_CREDENTIALS secret
+```
+
 ## CUDA (Linux/GPU machines)
 
 `pywhispercpp` must be compiled with CUDA support:

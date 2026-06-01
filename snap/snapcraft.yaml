@@ -41,8 +41,5 @@ parts:
       - libgomp1        # OpenMP runtime required by whisper.cpp
     override-pull: |
       craftctl default
-      VER=$(python3 -c "
-  import tomllib, pathlib
-  print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
-  ")
+      VER=$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
       craftctl set version="$VER"

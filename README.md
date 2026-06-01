@@ -8,18 +8,21 @@ It crawls a directory recursively, transcribes every video it finds using [whisp
 
 ## Install
 
+**Ubuntu (snap — recommended, no prerequisites):**
 ```bash
-brew install ffmpeg        # macOS
-sudo apt install ffmpeg    # Linux
+sudo snap install add-subs-to-videos
 ```
 
+**Any platform with Python 3.12+:**
 ```bash
-pip install git+https://github.com/simnim/add_subs_to_videos.git
+pip install add-subs-to-videos
+# or
+pipx install add-subs-to-videos
 ```
 
 > `pywhispercpp` compiles a C++ extension at install time (requires CMake). On macOS, Metal is auto-detected. On Linux with CUDA:
 > ```bash
-> WHISPER_CUDA=1 pip install git+https://github.com/simnim/add_subs_to_videos.git
+> WHISPER_CUDA=1 pip install add-subs-to-videos
 > ```
 
 ## Usage
