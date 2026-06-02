@@ -4,7 +4,7 @@ import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import load_config, save_config
 from .transcribe import process_directory
 
 
@@ -194,21 +195,21 @@ class MainWindow(QMainWindow):
         self._load_prefs()
 
     def _load_prefs(self) -> None:
-        s = QSettings("add_subs_to_videos", "add_subs_to_videos")
-        self._model_combo.setCurrentText(s.value("model", "medium"))
-        self._lang_edit.setText(s.value("language", ""))
-        folder = s.value("last_folder", "")
-        if folder and Path(folder).is_dir():
-            self._drop_zone.setText(folder)
-            self._folder = Path(folder)
+        cfg = load_config()
+        self._model_combo.setCurrentText(cfg.get("model", "medium"))
+        self._lang_edit.setText(cfg.get("language", ""))
+        directory = cfg.get("directory", "")
+        if directory and Path(directory).is_dir():
+            self._drop_zone.setText(directory)
+            self._folder = Path(directory)
             self._run_btn.setEnabled(True)
 
     def _save_prefs(self) -> None:
-        s = QSettings("add_subs_to_videos", "add_subs_to_videos")
-        s.setValue("model", self._model_combo.currentText())
-        s.setValue("language", self._lang_edit.text().strip())
-        if self._folder:
-            s.setValue("last_folder", str(self._folder))
+        save_config({
+            "model": self._model_combo.currentText(),
+            "language": self._lang_edit.text().strip(),
+            "directory": str(self._folder) if self._folder else "",
+        })
 
     def closeEvent(self, event) -> None:
         self._save_prefs()

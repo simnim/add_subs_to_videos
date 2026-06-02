@@ -7,7 +7,7 @@ import pytest
 from add_subs_to_videos.cli import build_parser
 from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
-from add_subs_to_videos.transcribe import process_directory, transcribe_video
+from add_subs_to_videos.transcribe import _raw_to_dicts, process_directory, transcribe_video
 
 
 # ---------------------------------------------------------------------------
@@ -163,10 +163,52 @@ class TestBuildParser:
         assert args.verbose is True
         assert args.quiet is False
 
+    def test_quiet_short_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["/some/dir", "-q"])
+        assert args.quiet is True
+        assert args.verbose is False
+
+    def test_verbose_short_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["/some/dir", "-v"])
+        assert args.verbose is True
+        assert args.quiet is False
+
     def test_quiet_and_verbose_are_mutually_exclusive(self):
         parser = build_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["/some/dir", "--model", "small", "--quiet", "--verbose"])
+
+    def test_directory_is_optional(self):
+        # nargs="?" — omitting directory gives None, not an error from argparse
+        parser = build_parser()
+        args = parser.parse_args([])
+        assert args.directory is None
+
+    def test_config_model_overrides_hardcoded_default(self):
+        parser = build_parser()
+        parser.set_defaults(model="large-v3")
+        args = parser.parse_args(["/some/dir"])
+        assert args.model == "large-v3"
+
+    def test_cli_model_beats_config_default(self):
+        parser = build_parser()
+        parser.set_defaults(model="large-v3")
+        args = parser.parse_args(["/some/dir", "--model", "tiny"])
+        assert args.model == "tiny"
+
+    def test_config_language_overrides_none_default(self):
+        parser = build_parser()
+        parser.set_defaults(language="ja")
+        args = parser.parse_args(["/some/dir"])
+        assert args.language == "ja"
+
+    def test_cli_language_beats_config_default(self):
+        parser = build_parser()
+        parser.set_defaults(language="ja")
+        args = parser.parse_args(["/some/dir", "--language", "en"])
+        assert args.language == "en"
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +246,18 @@ class TestFindVideos:
         with pytest.raises(SystemExit):
             find_videos(f)
 
+    def test_deeply_nested_files_found(self, tmp_path):
+        deep = tmp_path / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / "deep.mp4").touch()
+        assert any(p.name == "deep.mp4" for p in find_videos(tmp_path))
+
+    def test_hidden_directory_contents_found(self, tmp_path):
+        hidden = tmp_path / ".hidden"
+        hidden.mkdir()
+        (hidden / "video.mp4").touch()
+        assert any(p.name == "video.mp4" for p in find_videos(tmp_path))
+
     def test_case_insensitive_extensions(self, tmp_path):
         (tmp_path / "VIDEO.MP4").touch()
         (tmp_path / "clip.MKV").touch()
@@ -215,6 +269,54 @@ class TestFindVideos:
             (tmp_path / f"file{ext}").touch()
         videos = find_videos(tmp_path)
         assert len(videos) == len(VIDEO_EXTENSIONS)
+
+
+# ---------------------------------------------------------------------------
+# _raw_to_dicts
+# ---------------------------------------------------------------------------
+
+
+class TestRawToDicts:
+    def _make_seg(self, mocker, t0, t1, text):
+        seg = mocker.MagicMock()
+        seg.t0 = t0
+        seg.t1 = t1
+        seg.text = text
+        return seg
+
+    def test_centiseconds_converted_to_seconds(self, mocker):
+        seg = self._make_seg(mocker, t0=100, t1=350, text="hi")
+        result = _raw_to_dicts([seg])
+        assert result[0]["start"] == pytest.approx(1.0)
+        assert result[0]["end"] == pytest.approx(3.5)
+
+    def test_text_stripped(self, mocker):
+        seg = self._make_seg(mocker, t0=0, t1=100, text="  hello  ")
+        result = _raw_to_dicts([seg])
+        assert result[0]["text"] == "hello"
+
+    def test_multiple_segments_preserved(self, mocker):
+        segs = [
+            self._make_seg(mocker, 0, 100, "first"),
+            self._make_seg(mocker, 200, 300, "second"),
+        ]
+        result = _raw_to_dicts(segs)
+        assert len(result) == 2
+        assert result[1]["start"] == pytest.approx(2.0)
+
+    def test_zero_timestamps(self, mocker):
+        seg = self._make_seg(mocker, t0=0, t1=0, text="x")
+        result = _raw_to_dicts([seg])
+        assert result[0]["start"] == 0.0
+        assert result[0]["end"] == 0.0
+
+    def test_empty_input(self):
+        assert _raw_to_dicts([]) == []
+
+    def test_internal_whitespace_preserved(self, mocker):
+        seg = self._make_seg(mocker, 0, 100, "  hello  world  ")
+        result = _raw_to_dicts([seg])
+        assert result[0]["text"] == "hello  world"
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +350,13 @@ class TestTranscribeVideo:
         transcribe_video(video, model=mock_transcribe.model, language=None)
         mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
 
+    def test_propagates_model_exception(self, tmp_path, mock_transcribe):
+        mock_transcribe.model.transcribe.side_effect = RuntimeError("GPU OOM")
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        with pytest.raises(RuntimeError, match="GPU OOM"):
+            transcribe_video(video, model=mock_transcribe.model, language=None)
+
 
 # ---------------------------------------------------------------------------
 # process_directory
@@ -266,6 +375,11 @@ class TestProcessDirectory:
     def test_no_videos_skips_model_load(self, tmp_path, mock_transcribe):
         process_directory(tmp_path, **_COMMON_KWARGS)
         mock_transcribe.model_cls.assert_not_called()
+
+    def test_model_loaded_with_correct_name(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, model_name="large-v3", language=None, force=False, show_progress=False)
+        mock_transcribe.model_cls.assert_called_once_with("large-v3")
 
     def test_model_loaded_once_for_multiple_videos(self, tmp_video_dir, mock_transcribe):
         process_directory(tmp_video_dir, **_COMMON_KWARGS)
@@ -326,6 +440,57 @@ class TestProcessDirectory:
     def test_all_succeed_no_exit(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()
         process_directory(tmp_path, **_COMMON_KWARGS)
+
+    def test_multiple_videos_all_get_srt(self, tmp_path, mock_transcribe):
+        for name in ("a.mp4", "b.mkv", "c.avi"):
+            (tmp_path / name).touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        assert mock_transcribe.model.transcribe.call_count == 3
+        for name in ("a.srt", "b.srt", "c.srt"):
+            assert (tmp_path / name).exists()
+
+    def test_summary_stdout_counts(self, tmp_path, mock_transcribe, capsys):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        out = capsys.readouterr().out
+        assert "1 transcribed" in out
+        assert "0 skipped" in out
+        assert "0 failed" in out
+
+    def test_skipped_reflected_in_summary(self, tmp_path, mock_transcribe, capsys):
+        (tmp_path / "clip.mp4").touch()
+        (tmp_path / "clip.srt").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        out = capsys.readouterr().out
+        assert "0 transcribed" in out
+        assert "1 skipped" in out
+
+    def test_show_progress_true_does_not_raise(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, model_name="small", language=None, force=False, show_progress=True)
+
+    def test_language_forwarded_to_model(self, tmp_path, mock_transcribe):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        process_directory(tmp_path, model_name="small", language="es", force=False, show_progress=False)
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="es")
+
+    def test_empty_transcription_writes_empty_srt(self, tmp_path, mock_transcribe):
+        mock_transcribe.model.transcribe.return_value = []
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        srt = tmp_path / "clip.srt"
+        assert srt.exists()
+        assert srt.read_text(encoding="utf-8") == ""
+
+    def test_srt_content_matches_mock_segments(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        content = (tmp_path / "clip.srt").read_text(encoding="utf-8")
+        assert "00:00:01,000 --> 00:00:03,500" in content
+        assert "Hello world" in content
+        assert "00:00:04,000 --> 00:00:06,000" in content
+        assert "How are you" in content
 
     def test_srt_content_is_utf8(self, tmp_path, mock_transcribe):
         def make_seg(start, end, text):

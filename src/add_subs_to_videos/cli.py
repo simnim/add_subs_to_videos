@@ -4,6 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from .config import load_config
 from .transcribe import process_directory
 
 
@@ -12,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="add_subs_to_videos",
         description="Recursively transcribe video files to .srt using whisper.cpp",
     )
-    parser.add_argument("directory", type=Path, help="Root directory to crawl for video files")
+    parser.add_argument("directory", type=Path, nargs="?", help="Root directory to crawl for video files")
     parser.add_argument(
         "--model",
         default="medium",
@@ -42,7 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     parser = build_parser()
+    cfg = load_config()
+    if cfg:
+        parser.set_defaults(**cfg)
     args = parser.parse_args()
+
+    if args.directory is None:
+        parser.error("directory is required (provide on the command line or set in config.toml)")
+    args.directory = Path(args.directory).expanduser()
 
     if args.verbose:
         level = logging.DEBUG
