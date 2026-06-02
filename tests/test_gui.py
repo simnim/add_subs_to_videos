@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from PySide6.QtCore import QUrl
@@ -117,6 +117,7 @@ class TestWorkerThread:
             language=None,
             force=False,
             show_progress=False,
+            cancel=ANY,
         )
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
@@ -179,6 +180,23 @@ class TestWorkerThread:
         count_before = len(root.handlers)
         thread.run()
         assert len(root.handlers) == count_before
+
+    def test_cancel_sets_event_passed_to_process_directory(self, tmp_path, qapp, mocker):
+        import threading
+        received_cancel = {}
+
+        def capture_cancel(*args, cancel=None, **kwargs):
+            received_cancel["event"] = cancel
+
+        mocker.patch("add_subs_to_videos.gui.process_directory", side_effect=capture_cancel)
+        thread = _WorkerThread(tmp_path, "medium", None, False)
+        thread.run()
+        assert isinstance(received_cancel["event"], threading.Event)
+
+    def test_cancel_method_sets_the_event(self, thread, mock_pd):
+        assert not thread._cancel.is_set()
+        thread.cancel()
+        assert thread._cancel.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -259,3 +277,30 @@ class TestMainWindow:
         window._on_done(False)
         assert window._run_btn.isEnabled()
         assert "errors" in window._log.toPlainText()
+
+    def test_cancel_button_disabled_initially(self, window):
+        assert not window._cancel_btn.isEnabled()
+
+    def test_cancel_button_enabled_while_running(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._run()
+        assert window._cancel_btn.isEnabled()
+        assert not window._run_btn.isEnabled()
+
+    def test_cancel_button_disabled_on_done(self, window, tmp_path):
+        window._cancel_btn.setEnabled(True)
+        window._on_done(True)
+        assert not window._cancel_btn.isEnabled()
+
+    def test_cancel_run_calls_worker_cancel(self, window, mocker):
+        mock_worker = mocker.MagicMock()
+        window._worker = mock_worker
+        window._cancel_run()
+        mock_worker.cancel.assert_called_once()
+
+    def test_cancel_run_disables_cancel_button(self, window, mocker):
+        window._worker = mocker.MagicMock()
+        window._cancel_btn.setEnabled(True)
+        window._cancel_run()
+        assert not window._cancel_btn.isEnabled()

@@ -465,6 +465,35 @@ class TestProcessDirectory:
         assert "0 transcribed" in out
         assert "1 skipped" in out
 
+    def test_cancel_stops_processing_between_files(self, tmp_path, mock_transcribe):
+        import threading
+        (tmp_path / "a.mp4").touch()
+        (tmp_path / "b.mp4").touch()
+        cancel = threading.Event()
+
+        def transcribe_and_cancel(*args, **kwargs):
+            cancel.set()
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = transcribe_and_cancel
+        process_directory(tmp_path, **_COMMON_KWARGS, cancel=cancel)
+
+        assert mock_transcribe.model.transcribe.call_count == 1
+        assert not (tmp_path / "b.srt").exists()
+
+    def test_cancel_already_set_skips_all_files(self, tmp_path, mock_transcribe):
+        import threading
+        (tmp_path / "a.mp4").touch()
+        cancel = threading.Event()
+        cancel.set()
+        process_directory(tmp_path, **_COMMON_KWARGS, cancel=cancel)
+        mock_transcribe.model.transcribe.assert_not_called()
+
+    def test_cancel_none_processes_normally(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS, cancel=None)
+        mock_transcribe.model.transcribe.assert_called_once()
+
     def test_show_progress_true_does_not_raise(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()
         process_directory(tmp_path, model_name="small", language=None, force=False, show_progress=True)

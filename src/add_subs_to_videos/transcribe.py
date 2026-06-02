@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,6 +39,7 @@ def process_directory(
     language: str | None,
     force: bool,
     show_progress: bool = True,
+    cancel: threading.Event | None = None,
 ) -> None:
     videos = find_videos(root)
     if not videos:
@@ -60,6 +62,9 @@ def process_directory(
             dynamic_ncols=True,
         )
         for video_path in bar:
+            if cancel is not None and cancel.is_set():
+                logging.info("Cancelled.")
+                break
             bar.set_description(video_path.stem[:40])
             srt_path = video_path.with_suffix(".srt")
 

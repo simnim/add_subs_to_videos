@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -96,6 +97,10 @@ class _WorkerThread(QThread):
         self._model_name = model_name
         self._language = language
         self._force = force
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
 
     def run(self) -> None:
         handler = _QtLogHandler(self.log_line)
@@ -127,6 +132,7 @@ class _WorkerThread(QThread):
                 language=self._language,
                 force=self._force,
                 show_progress=False,
+                cancel=self._cancel,
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
@@ -178,11 +184,18 @@ class MainWindow(QMainWindow):
         opts.addStretch()
         layout.addLayout(opts)
 
+        btn_row = QHBoxLayout()
         self._run_btn = QPushButton("Run")
         self._run_btn.setEnabled(False)
         self._run_btn.setMinimumHeight(36)
         self._run_btn.clicked.connect(self._run)
-        layout.addWidget(self._run_btn)
+        btn_row.addWidget(self._run_btn)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setMinimumHeight(36)
+        self._cancel_btn.clicked.connect(self._cancel_run)
+        btn_row.addWidget(self._cancel_btn)
+        layout.addLayout(btn_row)
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
@@ -225,11 +238,17 @@ class MainWindow(QMainWindow):
             self._log.verticalScrollBar().maximum()
         )
 
+    def _cancel_run(self) -> None:
+        if self._worker:
+            self._worker.cancel()
+        self._cancel_btn.setEnabled(False)
+
     def _run(self) -> None:
         if not self._folder:
             return
         self._log.clear()
         self._run_btn.setEnabled(False)
+        self._cancel_btn.setEnabled(True)
         lang = self._lang_edit.text().strip() or None
         self._worker = _WorkerThread(
             self._folder,
@@ -243,6 +262,7 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, success: bool) -> None:
         self._run_btn.setEnabled(True)
+        self._cancel_btn.setEnabled(False)
         self._append_log("--- Done ---" if success else "--- Finished with errors ---")
 
 
