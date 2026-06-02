@@ -17,10 +17,11 @@ add_subs_to_videos = "add_subs_to_videos.cli:main"
 add-subs-to-videos-gui = "add_subs_to_videos.gui:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-mock"]
+dev = ["pytest>=8.0", "pytest-mock", "pytest-qt"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+qt_api = "pyside6"
 addopts = "-vvv -rA"
 markers = [
     "integration: end-to-end tests that download real audio and run the full pipeline (requires HUGGINGFACE_TOKEN)",
