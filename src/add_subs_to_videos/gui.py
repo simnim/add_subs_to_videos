@@ -231,6 +231,7 @@ class MainWindow(QMainWindow):
     def _on_folder_set(self, path: Path) -> None:
         self._folder = path
         self._run_btn.setEnabled(True)
+        self._save_prefs()
 
     def _append_log(self, line: str) -> None:
         self._log.appendPlainText(line)

@@ -13,6 +13,16 @@ It crawls a directory recursively, transcribes every video it finds using [whisp
 sudo snap install add-subs-to-videos
 ```
 
+**macOS (.dmg — no prerequisites):**
+Download `Add Subs to Videos-<version>.dmg` from [GitHub Releases](https://github.com/simnim/add_subs_to_videos/releases), open it, and drag the app to Applications.
+
+**macOS (CLI via pipx):**
+```bash
+brew install cmake ffmpeg
+pipx install "add-subs-to-videos[gui]"
+```
+> Metal GPU acceleration is auto-detected on macOS — no extra steps needed.
+
 **Any platform with Python 3.12+:**
 ```bash
 pip install add-subs-to-videos
@@ -20,7 +30,7 @@ pip install add-subs-to-videos
 pipx install add-subs-to-videos
 ```
 
-> `pywhispercpp` compiles a C++ extension at install time (requires CMake). On macOS, Metal is auto-detected. On Linux with CUDA:
+> `pywhispercpp` compiles a C++ extension at install time (requires CMake). On Linux with CUDA:
 > ```bash
 > WHISPER_CUDA=1 pip install add-subs-to-videos
 > ```

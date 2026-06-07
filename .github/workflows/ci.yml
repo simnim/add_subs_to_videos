@@ -7,7 +7,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -17,8 +20,13 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install ffmpeg
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt update && sudo apt install -y ffmpeg
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg cmake
 
       - name: Install dependencies
         run: uv sync --group dev

@@ -222,6 +222,15 @@ class TestMainWindow:
         window._drop_zone.folder_dropped.emit(tmp_path)
         assert window._folder == tmp_path
 
+    def test_folder_dropped_saves_prefs_immediately(self, mocker, window, tmp_path):
+        mock_save = mocker.patch("add_subs_to_videos.gui.save_config")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        mock_save.assert_called_once_with({
+            "model": window._model_combo.currentText(),
+            "language": window._lang_edit.text().strip(),
+            "directory": str(tmp_path),
+        })
+
     def test_load_prefs_sets_model(self, mocker, qtbot):
         mocker.patch("add_subs_to_videos.gui.load_config", return_value={"model": "large-v3"})
         w = MainWindow()
