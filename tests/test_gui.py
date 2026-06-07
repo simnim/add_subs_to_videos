@@ -120,6 +120,7 @@ class TestWorkerThread:
             force=False,
             show_progress=False,
             cancel=ANY,
+            on_progress=ANY,
         )
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QStyle,
     QVBoxLayout,
@@ -157,6 +158,7 @@ class DropZone(QFrame):
 
 class _WorkerThread(QThread):
     log_line = Signal(str)
+    progress = Signal(object)
     finished_run = Signal(bool)
 
     def __init__(
@@ -207,6 +209,7 @@ class _WorkerThread(QThread):
                 force=self._force,
                 show_progress=False,
                 cancel=self._cancel,
+                on_progress=self.progress.emit,
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
@@ -277,6 +280,25 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
 
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet("color: palette(window-text);")
+        status_row.addWidget(self._status_label, 1)
+        self._counts_label = QLabel("")
+        self._counts_label.setStyleSheet("color: palette(placeholder-text);")
+        status_row.addWidget(self._counts_label)
+        layout.addLayout(status_row)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 1)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("Ready")
+        self._progress_bar.setMaximumHeight(22)
+        layout.addWidget(self._progress_bar)
+
+        self._final_event = None
+
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(200)
@@ -322,6 +344,27 @@ class MainWindow(QMainWindow):
             self._log.verticalScrollBar().maximum()
         )
 
+    def _on_progress(self, event) -> None:
+        name = event.video.name if event.video else ""
+        if event.stage == "start":
+            self._progress_bar.setRange(0, 0)
+            self._progress_bar.setFormat(f"Working on {name}…")
+            self._status_label.setText(f"Processing {name}")
+        elif event.stage in ("done", "skip", "fail"):
+            self._progress_bar.setRange(0, event.total)
+            self._progress_bar.setValue(event.index)
+            self._progress_bar.setFormat("%v of %m")
+            verb = {"done": "Finished", "skip": "Skipped", "fail": "Failed"}[event.stage]
+            self._status_label.setText(f"{verb} {name}")
+        elif event.stage == "summary":
+            self._progress_bar.setRange(0, event.total)
+            self._progress_bar.setValue(event.total)
+            self._final_event = event
+
+        self._counts_label.setText(
+            f"done {event.done} · skipped {event.skipped} · failed {event.failed}"
+        )
+
     def _cancel_run(self) -> None:
         if self._worker:
             self._worker.cancel()
@@ -333,6 +376,12 @@ class MainWindow(QMainWindow):
         self._log.clear()
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
+        self._final_event = None
+        self._progress_bar.setRange(0, 1)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("Starting…")
+        self._status_label.setText("Preparing…")
+        self._counts_label.setText("")
         lang = self._lang_edit.text().strip() or None
         self._worker = _WorkerThread(
             self._folder,
@@ -341,12 +390,29 @@ class MainWindow(QMainWindow):
             self._force_check.isChecked(),
         )
         self._worker.log_line.connect(self._append_log)
+        self._worker.progress.connect(self._on_progress)
         self._worker.finished_run.connect(self._on_done)
         self._worker.start()
 
     def _on_done(self, success: bool) -> None:
         self._run_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
+        if self._final_event is not None:
+            e = self._final_event
+            mins, secs = divmod(int(e.elapsed or 0), 60)
+            elapsed_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
+            self._status_label.setText("Done" if success else "Finished with errors")
+            self._counts_label.setText(
+                f"done {e.done} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
+            )
+            self._progress_bar.setFormat(
+                f"Complete — {e.done} transcribed, {e.skipped} skipped,"
+                f" {e.failed} failed in {elapsed_str}"
+            )
+        else:
+            label = "Cancelled" if not success else "Done"
+            self._status_label.setText(label)
+            self._progress_bar.setFormat(label)
         self._append_log("--- Done ---" if success else "--- Finished with errors ---")
 
 
