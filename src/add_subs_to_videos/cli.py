@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="add_subs_to_videos",
         description="Recursively transcribe video files to .srt using whisper.cpp",
     )
-    parser.add_argument("directory", type=Path, nargs="?", help="Root directory to crawl for video files")
+    parser.add_argument("directory", type=Path, nargs="?", help="Video file or root directory to crawl for video files")
     parser.add_argument(
         "--model",
         default="medium",

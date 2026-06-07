@@ -48,8 +48,15 @@ class TestDropZone:
         dz.dragEnterEvent(event)
         event.acceptProposedAction.assert_called_once()
 
-    def test_drag_enter_ignores_file_url(self, dz, tmp_path):
+    def test_drag_enter_accepts_video_file(self, dz, tmp_path):
         f = tmp_path / "clip.mp4"
+        f.touch()
+        event = _mime_event([f])
+        dz.dragEnterEvent(event)
+        event.acceptProposedAction.assert_called_once()
+
+    def test_drag_enter_ignores_non_video_file(self, dz, tmp_path):
+        f = tmp_path / "notes.txt"
         f.touch()
         event = _mime_event([f])
         dz.dragEnterEvent(event)
@@ -74,8 +81,18 @@ class TestDropZone:
         assert dz._name_label.text() == tmp_path.name
         assert dz.toolTip() == str(tmp_path)
 
-    def test_drop_ignores_file_url(self, dz, tmp_path):
+    def test_drop_emits_for_video_file(self, dz, tmp_path):
         f = tmp_path / "clip.mp4"
+        f.touch()
+        received = []
+        dz.folder_dropped.connect(received.append)
+        dz.dropEvent(_mime_event([f]))
+        assert received == [f]
+        assert dz._folder_path == f
+        assert dz._name_label.text() == f.name
+
+    def test_drop_ignores_non_video_file(self, dz, tmp_path):
+        f = tmp_path / "notes.txt"
         f.touch()
         received = []
         dz.folder_dropped.connect(received.append)

@@ -240,11 +240,20 @@ class TestFindVideos:
     def test_empty_directory_returns_empty_list(self, tmp_path):
         assert find_videos(tmp_path) == []
 
-    def test_non_directory_path_exits(self, tmp_path):
+    def test_single_video_file_returns_list_with_that_file(self, tmp_path):
         f = tmp_path / "file.mp4"
+        f.touch()
+        assert find_videos(f) == [f]
+
+    def test_non_video_file_exits(self, tmp_path):
+        f = tmp_path / "notes.txt"
         f.touch()
         with pytest.raises(SystemExit):
             find_videos(f)
+
+    def test_nonexistent_path_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            find_videos(tmp_path / "missing")
 
     def test_deeply_nested_files_found(self, tmp_path):
         deep = tmp_path / "a" / "b" / "c"

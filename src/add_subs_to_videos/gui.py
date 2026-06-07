@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .config import load_config, save_config
+from .files import VIDEO_EXTENSIONS
 from .transcribe import process_directory
 
 
@@ -66,7 +67,7 @@ class DropZone(QFrame):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        self._placeholder_label = QLabel("Drop a folder here\nor click to browse")
+        self._placeholder_label = QLabel("Drop a folder or video file here\nor click to browse")
         self._placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder_font = QFont()
         placeholder_font.setPointSize(14)
@@ -76,9 +77,6 @@ class DropZone(QFrame):
 
         self._icon_label = QLabel()
         self._icon_label.setFixedSize(32, 32)
-        self._icon_label.setPixmap(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon).pixmap(32, 32)
-        )
         layout.addWidget(self._icon_label)
 
         text_col = QVBoxLayout()
@@ -122,6 +120,8 @@ class DropZone(QFrame):
             self._icon_label.setVisible(True)
             self._name_label.setVisible(True)
             self._path_label.setVisible(True)
+            icon = QStyle.StandardPixmap.SP_FileIcon if path.is_file() else QStyle.StandardPixmap.SP_DirIcon
+            self._icon_label.setPixmap(self.style().standardIcon(icon).pixmap(32, 32))
             self._name_label.setText(path.name or str(path))
             self._update_path_label(path)
             self.setToolTip(str(path))
@@ -132,10 +132,14 @@ class DropZone(QFrame):
         if self._folder_path is not None:
             self._update_path_label(self._folder_path)
 
+    @staticmethod
+    def _is_acceptable(path: Path) -> bool:
+        return path.is_dir() or (path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS)
+
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
-            if urls and Path(urls[0].toLocalFile()).is_dir():
+            if urls and self._is_acceptable(Path(urls[0].toLocalFile())):
                 event.acceptProposedAction()
                 return
         event.ignore()
@@ -144,7 +148,7 @@ class DropZone(QFrame):
         urls = event.mimeData().urls()
         if urls:
             path = Path(urls[0].toLocalFile())
-            if path.is_dir():
+            if self._is_acceptable(path):
                 self.set_folder(path)
                 self.folder_dropped.emit(path)
 
@@ -242,7 +246,7 @@ class MainWindow(QMainWindow):
         self._drop_zone.folder_dropped.connect(self._on_folder_set)
         layout.addWidget(self._drop_zone)
 
-        self._change_hint = QLabel("Drop a new folder above, or click to change")
+        self._change_hint = QLabel("Drop a new folder or video file above, or click to change")
         self._change_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._change_hint.setStyleSheet("color: palette(placeholder-text);")
         self._change_hint.setVisible(False)
@@ -314,7 +318,7 @@ class MainWindow(QMainWindow):
         self._model_combo.setCurrentText(cfg.get("model", "medium"))
         self._lang_edit.setText(cfg.get("language", ""))
         directory = cfg.get("directory", "")
-        if directory and Path(directory).is_dir():
+        if directory and Path(directory).exists():
             path = Path(directory)
             self._drop_zone.set_folder(path)
             self._folder = path

@@ -9,6 +9,10 @@ VIDEO_EXTENSIONS: frozenset[str] = frozenset(
 
 
 def find_videos(root: Path) -> list[Path]:
-    if not root.is_dir():
-        sys.exit(f"Error: '{root}' is not a directory")
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS)
+    if root.is_dir():
+        return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS)
+    if root.is_file():
+        if root.suffix.lower() in VIDEO_EXTENSIONS:
+            return [root]
+        sys.exit(f"Error: '{root}' is not a supported video file")
+    sys.exit(f"Error: '{root}' does not exist")
