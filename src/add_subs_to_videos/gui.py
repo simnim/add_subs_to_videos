@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -42,95 +41,82 @@ class _QtLogHandler(logging.Handler):
 class DropZone(QFrame):
     folder_dropped = Signal(Path)
 
-    _EMPTY_STYLE = (
-        "DropZone {"
-        "  border: 2px dashed palette(mid);"
-        "  border-radius: 8px;"
-        "  background: palette(base);"
-        "}"
-    )
-    _SELECTED_STYLE = (
+    _STYLE = (
         "DropZone {"
         "  border: 1px solid palette(mid);"
-        "  border-radius: 10px;"
-        "  background: palette(alternate-base);"
+        "  border-radius: 12px;"
+        "  background: palette(button);"
+        "}"
+        "DropZone:hover {"
+        "  background: palette(light);"
+        "  border: 1px solid palette(highlight);"
         "}"
     )
+
+    _EMPTY_NAME = "Drop a folder or video file here"
+    _EMPTY_HINT = "or click to browse"
 
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
         self.setMinimumHeight(120)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(self._STYLE)
         self._folder_path: Path | None = None
 
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._placeholder_label = QLabel("Drop a folder or video file here\nor click to browse")
-        self._placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder_font = QFont()
-        placeholder_font.setPointSize(14)
-        self._placeholder_label.setFont(placeholder_font)
-        self._placeholder_label.setStyleSheet("color: palette(placeholder-text);")
-        layout.addWidget(self._placeholder_label, 1)
-
-        self._icon_label = QLabel()
-        self._icon_label.setFixedSize(32, 32)
+        self._icon_label = QLabel("\U0001F5B1")
+        icon_font = QFont()
+        icon_font.setPointSize(28)
+        self._icon_label.setFont(icon_font)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._icon_label)
 
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
         self._name_label = QLabel()
         name_font = QFont()
-        name_font.setPointSize(13)
+        name_font.setPointSize(14)
         name_font.setBold(True)
         self._name_label.setFont(name_font)
-        text_col.addWidget(self._name_label)
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._name_label)
 
         self._path_label = QLabel()
         path_font = QFont()
         path_font.setPointSize(11)
         self._path_label.setFont(path_font)
-        self._path_label.setStyleSheet("color: palette(window-text);")
-        text_col.addWidget(self._path_label)
-
-        layout.addLayout(text_col, 1)
+        self._path_label.setStyleSheet("color: palette(placeholder-text);")
+        self._path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._path_label)
 
         self.set_folder(None)
 
-    def _update_path_label(self, path: Path) -> None:
+    def _update_path_label(self, text: str) -> None:
         metrics = QFontMetrics(self._path_label.font())
         elided = metrics.elidedText(
-            str(path), Qt.TextElideMode.ElideMiddle, self._path_label.width() or 320
+            text, Qt.TextElideMode.ElideMiddle, self.width() - 32 or 320
         )
         self._path_label.setText(elided)
 
     def set_folder(self, path: Path | None) -> None:
         self._folder_path = path
         if path is None:
-            self._icon_label.setVisible(False)
-            self._name_label.setVisible(False)
-            self._path_label.setVisible(False)
-            self._placeholder_label.setVisible(True)
             self.setToolTip("")
-            self.setStyleSheet(self._EMPTY_STYLE)
+            self._name_label.setText(self._EMPTY_NAME)
+            self._update_path_label(self._EMPTY_HINT)
         else:
-            self._placeholder_label.setVisible(False)
-            self._icon_label.setVisible(True)
-            self._name_label.setVisible(True)
-            self._path_label.setVisible(True)
-            icon = QStyle.StandardPixmap.SP_FileIcon if path.is_file() else QStyle.StandardPixmap.SP_DirIcon
-            self._icon_label.setPixmap(self.style().standardIcon(icon).pixmap(32, 32))
             self._name_label.setText(path.name or str(path))
-            self._update_path_label(path)
+            self._update_path_label(str(path))
             self.setToolTip(str(path))
-            self.setStyleSheet(self._SELECTED_STYLE)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._folder_path is not None:
-            self._update_path_label(self._folder_path)
+        text = str(self._folder_path) if self._folder_path is not None else self._EMPTY_HINT
+        self._update_path_label(text)
 
     @staticmethod
     def _is_acceptable(path: Path) -> bool:
