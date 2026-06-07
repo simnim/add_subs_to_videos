@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QFileDialog
 
-from add_subs_to_videos.gui import DropZone, MainWindow, _WorkerThread
+from add_subs_to_videos.gui import DropZone, MainWindow, _dev_icon_path, _WorkerThread
 
 
 def _mime_event(paths: list[Path]) -> MagicMock:
@@ -68,9 +68,11 @@ class TestDropZone:
         dz.dropEvent(_mime_event([tmp_path]))
         assert received == [tmp_path]
 
-    def test_drop_updates_label_text(self, dz, tmp_path):
+    def test_drop_updates_folder_state(self, dz, tmp_path):
         dz.dropEvent(_mime_event([tmp_path]))
-        assert dz.text() == str(tmp_path)
+        assert dz._folder_path == tmp_path
+        assert dz._name_label.text() == tmp_path.name
+        assert dz.toolTip() == str(tmp_path)
 
     def test_drop_ignores_file_url(self, dz, tmp_path):
         f = tmp_path / "clip.mp4"
@@ -313,3 +315,20 @@ class TestMainWindow:
         window._cancel_btn.setEnabled(True)
         window._cancel_run()
         assert not window._cancel_btn.isEnabled()
+
+
+# ---------------------------------------------------------------------------
+# _dev_icon_path
+# ---------------------------------------------------------------------------
+
+
+def test_dev_icon_path_finds_repo_asset():
+    icon_path = _dev_icon_path()
+    assert icon_path is not None
+    assert icon_path.name == "icon.svg"
+    assert icon_path.is_file()
+
+
+def test_dev_icon_path_returns_none_when_missing(mocker):
+    mocker.patch("add_subs_to_videos.gui.Path.is_file", return_value=False)
+    assert _dev_icon_path() is None

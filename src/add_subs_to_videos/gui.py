@@ -6,18 +6,20 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -35,27 +37,99 @@ class _QtLogHandler(logging.Handler):
         self._signal.emit(self.format(record))
 
 
-class DropZone(QLabel):
+class DropZone(QFrame):
     folder_dropped = Signal(Path)
+
+    _EMPTY_STYLE = (
+        "DropZone {"
+        "  border: 2px dashed palette(mid);"
+        "  border-radius: 8px;"
+        "  background: palette(base);"
+        "}"
+    )
+    _SELECTED_STYLE = (
+        "DropZone {"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 10px;"
+        "  background: palette(alternate-base);"
+        "}"
+    )
 
     def __init__(self) -> None:
         super().__init__()
-        self.setText("Drop a folder here\nor click to browse")
         self.setAcceptDrops(True)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(120)
-        font = QFont()
-        font.setPointSize(14)
-        self.setFont(font)
-        self.setStyleSheet(
-            "QLabel {"
-            "  border: 2px dashed #888;"
-            "  border-radius: 8px;"
-            "  color: #555;"
-            "  background: #f5f5f5;"
-            "  padding: 16px;"
-            "}"
+        self._folder_path: Path | None = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        self._placeholder_label = QLabel("Drop a folder here\nor click to browse")
+        self._placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_font = QFont()
+        placeholder_font.setPointSize(14)
+        self._placeholder_label.setFont(placeholder_font)
+        self._placeholder_label.setStyleSheet("color: palette(placeholder-text);")
+        layout.addWidget(self._placeholder_label, 1)
+
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(32, 32)
+        self._icon_label.setPixmap(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon).pixmap(32, 32)
         )
+        layout.addWidget(self._icon_label)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        self._name_label = QLabel()
+        name_font = QFont()
+        name_font.setPointSize(13)
+        name_font.setBold(True)
+        self._name_label.setFont(name_font)
+        text_col.addWidget(self._name_label)
+
+        self._path_label = QLabel()
+        path_font = QFont()
+        path_font.setPointSize(11)
+        self._path_label.setFont(path_font)
+        self._path_label.setStyleSheet("color: palette(window-text);")
+        text_col.addWidget(self._path_label)
+
+        layout.addLayout(text_col, 1)
+
+        self.set_folder(None)
+
+    def _update_path_label(self, path: Path) -> None:
+        metrics = QFontMetrics(self._path_label.font())
+        elided = metrics.elidedText(
+            str(path), Qt.TextElideMode.ElideMiddle, self._path_label.width() or 320
+        )
+        self._path_label.setText(elided)
+
+    def set_folder(self, path: Path | None) -> None:
+        self._folder_path = path
+        if path is None:
+            self._icon_label.setVisible(False)
+            self._name_label.setVisible(False)
+            self._path_label.setVisible(False)
+            self._placeholder_label.setVisible(True)
+            self.setToolTip("")
+            self.setStyleSheet(self._EMPTY_STYLE)
+        else:
+            self._placeholder_label.setVisible(False)
+            self._icon_label.setVisible(True)
+            self._name_label.setVisible(True)
+            self._path_label.setVisible(True)
+            self._name_label.setText(path.name or str(path))
+            self._update_path_label(path)
+            self.setToolTip(str(path))
+            self.setStyleSheet(self._SELECTED_STYLE)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._folder_path is not None:
+            self._update_path_label(self._folder_path)
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
@@ -70,14 +144,14 @@ class DropZone(QLabel):
         if urls:
             path = Path(urls[0].toLocalFile())
             if path.is_dir():
-                self.setText(str(path))
+                self.set_folder(path)
                 self.folder_dropped.emit(path)
 
     def mousePressEvent(self, event) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select folder")
         if folder:
             path = Path(folder)
-            self.setText(str(path))
+            self.set_folder(path)
             self.folder_dropped.emit(path)
 
 
@@ -165,6 +239,12 @@ class MainWindow(QMainWindow):
         self._drop_zone.folder_dropped.connect(self._on_folder_set)
         layout.addWidget(self._drop_zone)
 
+        self._change_hint = QLabel("Drop a new folder above, or click to change")
+        self._change_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._change_hint.setStyleSheet("color: palette(placeholder-text);")
+        self._change_hint.setVisible(False)
+        layout.addWidget(self._change_hint)
+
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Model:"))
         self._model_combo = QComboBox()
@@ -213,9 +293,11 @@ class MainWindow(QMainWindow):
         self._lang_edit.setText(cfg.get("language", ""))
         directory = cfg.get("directory", "")
         if directory and Path(directory).is_dir():
-            self._drop_zone.setText(directory)
-            self._folder = Path(directory)
+            path = Path(directory)
+            self._drop_zone.set_folder(path)
+            self._folder = path
             self._run_btn.setEnabled(True)
+            self._change_hint.setVisible(True)
 
     def _save_prefs(self) -> None:
         save_config({
@@ -231,6 +313,7 @@ class MainWindow(QMainWindow):
     def _on_folder_set(self, path: Path) -> None:
         self._folder = path
         self._run_btn.setEnabled(True)
+        self._change_hint.setVisible(True)
         self._save_prefs()
 
     def _append_log(self, line: str) -> None:
@@ -267,8 +350,17 @@ class MainWindow(QMainWindow):
         self._append_log("--- Done ---" if success else "--- Finished with errors ---")
 
 
+def _dev_icon_path() -> Path | None:
+    """Locate assets/icon.svg relative to a source checkout (e.g. `uv run`)."""
+    candidate = Path(__file__).resolve().parents[2] / "assets" / "icon.svg"
+    return candidate if candidate.is_file() else None
+
+
 def main() -> None:
     app = QApplication(sys.argv)
+    icon_path = _dev_icon_path()
+    if icon_path is not None:
+        app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
