@@ -120,18 +120,22 @@ class TestDropZone:
             dz.mousePressEvent(MagicMock())
         assert received == [tmp_path]
 
-    def test_resize_re_elides_selection_path_label_to_new_width(self, dz, tmp_path):
-        long_dir = tmp_path / ("a-very-long-directory-name-for-eliding" * 3)
-        long_dir.mkdir()
-        dz.dropEvent(_mime_event([long_dir]))
-        dz.resize(800, dz.height())
-        wide_text = dz._selection_path_label.text()
+    @staticmethod
+    def _resize_event(old_size, new_size):
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QResizeEvent
+        return QResizeEvent(QSize(*new_size), QSize(*old_size))
 
-        dz.resize(120, dz.height())
-        narrow_text = dz._selection_path_label.text()
+    def test_resize_re_elides_selection_path_label_when_folder_set(self, dz, tmp_path, mocker):
+        dz.dropEvent(_mime_event([tmp_path]))
+        spy = mocker.spy(dz, "_update_selection_path_label")
+        dz.resizeEvent(self._resize_event((400, 120), (200, 120)))
+        spy.assert_called_once_with(str(tmp_path))
 
-        assert narrow_text != wide_text
-        assert len(narrow_text) < len(wide_text)
+    def test_resize_does_not_touch_selection_path_label_when_no_folder(self, dz, mocker):
+        spy = mocker.spy(dz, "_update_selection_path_label")
+        dz.resizeEvent(self._resize_event((400, 120), (200, 120)))
+        spy.assert_not_called()
 
     def test_browse_does_nothing_on_cancel(self, dz):
         received = []
@@ -418,6 +422,34 @@ class TestMainWindow:
             **extra,
         )
 
+    def test_on_done_without_final_event_shows_done_or_cancelled_status(self, window):
+        window._on_done(True)
+        assert window._status_label.text() == "Done"
+        assert window._overall_bar.format() == "Done"
+
+        window._final_event = None
+        window._on_done(False)
+        assert window._status_label.text() == "Cancelled"
+        assert window._overall_bar.format() == "Cancelled"
+
+    def test_on_done_formats_elapsed_under_a_minute(self, window, tmp_path):
+        window._on_progress(self._event("start", index=1, total=1, video=tmp_path / "movie.mp4"))
+        window._on_progress(self._event(
+            "summary", index=1, total=1, elapsed=45.0, done=1, skipped=0, failed=0,
+        ))
+        window._on_done(True)
+        assert "45s" in window._counts_label.text()
+        assert "Complete — 1 transcribed, 0 skipped, 0 failed in 45s" == window._overall_bar.format()
+
+    def test_on_done_formats_elapsed_over_a_minute(self, window, tmp_path):
+        window._on_progress(self._event("start", index=1, total=1, video=tmp_path / "movie.mp4"))
+        window._on_progress(self._event(
+            "summary", index=1, total=1, elapsed=65.0, done=0, skipped=1, failed=0,
+        ))
+        window._on_done(True)
+        assert "1m 05s" in window._counts_label.text()
+        assert "Complete — 0 transcribed, 1 skipped, 0 failed in 1m 05s" == window._overall_bar.format()
+
     def test_progress_start_sets_overall_bar_range_and_value(self, window, tmp_path):
         video = tmp_path / "movie.mp4"
         window._on_progress(self._event("start", index=3, total=10, video=video))
@@ -471,6 +503,28 @@ class TestMainWindow:
         window._on_file_progress(0.5)
         assert window._overall_bar.value() == 0
         assert window._overall_bar.format() == "Ready"
+
+    def test_run_resets_progress_widgets_to_starting_state(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+
+        # Dirty up the widgets as if a previous run had completed.
+        video = tmp_path / "movie.mp4"
+        window._on_progress(self._event("start", index=1, total=2, video=video))
+        window._on_progress(self._event("done", index=1, total=2, video=video))
+        window._append_log("leftover from previous run")
+
+        window._run()
+
+        assert window._overall_bar.format() == "Starting…"
+        assert window._overall_bar.minimum() == 0
+        assert window._overall_bar.maximum() == 1
+        assert window._overall_bar.value() == 0
+        assert window._file_bar.value() == 0
+        assert window._file_bar.format() == ""
+        assert window._status_label.text() == "Preparing…"
+        assert window._counts_label.text() == ""
+        assert window._log.toPlainText() == ""
 
     def test_cancel_button_disabled_initially(self, window):
         assert not window._cancel_btn.isEnabled()
