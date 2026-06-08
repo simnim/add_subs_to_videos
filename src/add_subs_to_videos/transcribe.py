@@ -138,7 +138,7 @@ def process_directory(
 
     with logging_redirect_tqdm():
         bar = tqdm(
-            videos,
+            total=total,
             desc="transcribing",
             unit="video",
             disable=not show_progress,
@@ -154,16 +154,21 @@ def process_directory(
             dynamic_ncols=True,
         )
 
+        current_index = 0
+
         def _file_progress(fraction: float) -> None:
             file_bar.n = round(fraction * 100, 1)
             file_bar.refresh()
+            bar.n = round((current_index - 1) + fraction, 3)
+            bar.refresh()
             if on_file_progress is not None:
                 on_file_progress(fraction)
 
-        for index, video_path in enumerate(bar, start=1):
+        for index, video_path in enumerate(videos, start=1):
             if cancel is not None and cancel.is_set():
                 logging.info("Cancelled.")
                 break
+            current_index = index
             bar.set_description(video_path.stem[:40])
             srt_path = video_path.with_suffix(".srt")
             file_bar.reset()
@@ -173,6 +178,8 @@ def process_directory(
             if srt_path.exists() and not force:
                 logging.info("SKIP  %s", video_path)
                 skipped += 1
+                bar.n = index
+                bar.refresh()
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
                 _emit("skip", index, video_path)
                 continue
@@ -199,9 +206,12 @@ def process_directory(
             except Exception as exc:
                 logging.error("FAIL  %s: %s", video_path, exc, exc_info=True)
                 failed.append((video_path, str(exc)))
+                bar.n = index
+                bar.refresh()
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
                 _emit("fail", index, video_path)
 
+        bar.close()
         file_bar.close()
 
     elapsed = time.monotonic() - t0
