@@ -53,7 +53,7 @@ class DropZone(QFrame):
         "}"
     )
 
-    _EMPTY_NAME = "\U0001F5B1️\U0001F5B1️ Drop a folder or video file here ➡️➡️\U0001F449\U0001F449 this"
+    _EMPTY_NAME = "\U0001F5B1️ Drop a folder or video file here ➡️\U0001F449 this"
     _EMPTY_HINT = "or click to browse"
 
     def __init__(self) -> None:
@@ -109,7 +109,8 @@ class DropZone(QFrame):
             self._name_label.setText(self._EMPTY_NAME)
             self._update_path_label(self._EMPTY_HINT)
         else:
-            self._name_label.setText(path.name or str(path))
+            icon = "\U0001F4C1" if path.is_dir() else "\U0001F3AC"
+            self._name_label.setText(f"{icon} {path.name or str(path)}")
             self._update_path_label(str(path))
             self.setToolTip(str(path))
 
