@@ -497,6 +497,7 @@ class MainWindow(QMainWindow):
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+        self._status_label.setText("Cancelling…")
 
     def _run(self) -> None:
         if not self._folder:

@@ -9,6 +9,7 @@ from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
 from add_subs_to_videos.transcribe import (
     _Cancelled,
+    _format_log_timestamp,
     _probe_duration,
     _raw_to_dicts,
     process_directory,
@@ -46,6 +47,23 @@ class TestFormatSrtTimestamp:
 
     def test_near_minute_boundary(self):
         assert format_srt_timestamp(59.999) == "00:00:59,999"
+
+
+class TestFormatLogTimestamp:
+    def test_zero(self):
+        assert _format_log_timestamp(0.0) == "00:00"
+
+    def test_seconds_only(self):
+        assert _format_log_timestamp(45.0) == "00:45"
+
+    def test_minute_rollover(self):
+        assert _format_log_timestamp(65.0) == "01:05"
+
+    def test_truncates_fractional_seconds(self):
+        assert _format_log_timestamp(59.9) == "00:59"
+
+    def test_hour_plus_renders_as_minutes(self):
+        assert _format_log_timestamp(3661.0) == "61:01"
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +584,47 @@ _COMMON_KWARGS = dict(
 )
 
 
+class _FakeBar:
+    """Stand-in for tqdm that records `.n` at each refresh, without rendering."""
+
+    def __init__(self, *args, **kwargs):
+        self.n = 0
+        self.n_history: list[float] = []
+
+    def set_description(self, *args, **kwargs):
+        pass
+
+    def set_postfix(self, *args, **kwargs):
+        pass
+
+    def refresh(self):
+        self.n_history.append(self.n)
+
+    def reset(self):
+        self.n = 0
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def fake_tqdm(mocker):
+    """Patches the tqdm bars in process_directory with `_FakeBar` instances.
+
+    Returns the list of created bars in creation order: [outer "transcribing"
+    bar, inner "file" bar].
+    """
+    created: list[_FakeBar] = []
+
+    def make_bar(*args, **kwargs):
+        bar = _FakeBar(*args, **kwargs)
+        created.append(bar)
+        return bar
+
+    mocker.patch("add_subs_to_videos.transcribe.tqdm", side_effect=make_bar)
+    return created
+
+
 class TestProcessDirectory:
     def test_no_videos_skips_model_load(self, tmp_path, mock_transcribe):
         process_directory(tmp_path, **_COMMON_KWARGS)
@@ -715,7 +774,10 @@ class TestProcessDirectory:
         video = tmp_path / "clip.mp4"
         video.touch()
         process_directory(tmp_path, model_name="small", language="es", force=False, show_progress=False)
-        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="es")
+        mock_transcribe.model.transcribe.assert_called_once()
+        args, kwargs = mock_transcribe.model.transcribe.call_args
+        assert args == (str(video),)
+        assert kwargs["language"] == "es"
 
     def test_empty_transcription_writes_empty_srt(self, tmp_path, mock_transcribe):
         mock_transcribe.model.transcribe.return_value = []
@@ -753,3 +815,101 @@ class TestProcessDirectory:
         process_directory(tmp_path, **_COMMON_KWARGS)
         content = (tmp_path / "clip.srt").read_text(encoding="utf-8")
         assert "Héllo wörld" in content
+
+    def test_outer_bar_shows_continuous_combined_progress(
+        self, tmp_path, mock_transcribe, mocker, fake_tqdm
+    ):
+        mocker.patch("add_subs_to_videos.transcribe._probe_duration", return_value=10.0)
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            for seg in mock_transcribe.raw_segs:
+                new_segment_callback(seg)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        (tmp_path / "a.mp4").touch()
+        (tmp_path / "b.mp4").touch()
+
+        process_directory(tmp_path, model_name="small", language=None, force=False, show_progress=True)
+
+        outer_bar, file_bar = fake_tqdm
+        assert outer_bar.n_history == [0.0, 0.35, 0.6, 1.0, 1.0, 1.35, 1.6, 2.0]
+        assert file_bar.n_history == [0.0, 35.0, 60.0, 100.0, 0.0, 35.0, 60.0, 100.0]
+
+    def test_outer_bar_snaps_to_integer_on_skip_and_fail(
+        self, tmp_path, mock_transcribe, fake_tqdm
+    ):
+        (tmp_path / "a.mp4").touch()
+        (tmp_path / "a.srt").touch()
+        (tmp_path / "b.mp4").touch()
+        mock_transcribe.model.transcribe.side_effect = RuntimeError("boom")
+
+        with pytest.raises(SystemExit):
+            process_directory(tmp_path, model_name="small", language=None, force=False, show_progress=True)
+
+        outer_bar, _file_bar = fake_tqdm
+        assert outer_bar.n_history == [0.0, 1, 1.0, 2]
+        assert outer_bar.n == 2
+
+    def test_on_progress_emits_expected_event_sequence_for_mixed_outcomes(
+        self, tmp_path, mock_transcribe
+    ):
+        ok = tmp_path / "a.mp4"
+        ok.touch()
+        skipped = tmp_path / "b.mp4"
+        skipped.touch()
+        (tmp_path / "b.srt").touch()
+        failed = tmp_path / "c.mp4"
+        failed.touch()
+
+        mock_transcribe.model.transcribe.side_effect = [
+            mock_transcribe.raw_segs,
+            RuntimeError("boom"),
+        ]
+
+        events = []
+        with pytest.raises(SystemExit):
+            process_directory(tmp_path, **_COMMON_KWARGS, on_progress=events.append)
+
+        stages = [(e.stage, e.index, e.video) for e in events]
+        assert stages == [
+            ("start", 1, ok),
+            ("done", 1, ok),
+            ("start", 2, skipped),
+            ("skip", 2, skipped),
+            ("start", 3, failed),
+            ("fail", 3, failed),
+            ("summary", 3, None),
+        ]
+
+        # `start` reflects the running counts *before* this file is accounted for;
+        # `done`/`skip`/`fail` reflect the counts *after*.
+        by_stage = {(e.stage, e.index): e for e in events}
+        assert (by_stage[("start", 1)].done, by_stage[("start", 1)].skipped, by_stage[("start", 1)].failed) == (0, 0, 0)
+        assert (by_stage[("done", 1)].done, by_stage[("done", 1)].skipped, by_stage[("done", 1)].failed) == (1, 0, 0)
+        assert (by_stage[("start", 2)].done, by_stage[("start", 2)].skipped, by_stage[("start", 2)].failed) == (1, 0, 0)
+        assert (by_stage[("skip", 2)].done, by_stage[("skip", 2)].skipped, by_stage[("skip", 2)].failed) == (1, 1, 0)
+        assert (by_stage[("start", 3)].done, by_stage[("start", 3)].skipped, by_stage[("start", 3)].failed) == (1, 1, 0)
+        assert (by_stage[("fail", 3)].done, by_stage[("fail", 3)].skipped, by_stage[("fail", 3)].failed) == (1, 1, 1)
+
+        summary = events[-1]
+        assert summary.total == 3
+        assert (summary.done, summary.skipped, summary.failed) == (1, 1, 1)
+        assert summary.elapsed is not None and summary.elapsed >= 0
+
+    def test_on_progress_emits_summary_after_cancellation(self, tmp_path, mock_transcribe):
+        import threading
+
+        (tmp_path / "a.mp4").touch()
+        (tmp_path / "b.mp4").touch()
+        cancel = threading.Event()
+        cancel.set()
+
+        events = []
+        process_directory(tmp_path, **_COMMON_KWARGS, cancel=cancel, on_progress=events.append)
+
+        assert [e.stage for e in events] == ["summary"]
+        summary = events[0]
+        assert summary.video is None
+        assert summary.index == summary.total == 2
+        assert (summary.done, summary.skipped, summary.failed) == (0, 0, 0)
