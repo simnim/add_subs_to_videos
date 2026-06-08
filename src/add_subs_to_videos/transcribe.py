@@ -144,14 +144,30 @@ def process_directory(
             disable=not show_progress,
             dynamic_ncols=True,
         )
+        file_bar = tqdm(
+            total=100,
+            desc="file",
+            unit="%",
+            disable=not show_progress,
+            leave=False,
+            position=1,
+            dynamic_ncols=True,
+        )
+
+        def _file_progress(fraction: float) -> None:
+            file_bar.n = round(fraction * 100, 1)
+            file_bar.refresh()
+            if on_file_progress is not None:
+                on_file_progress(fraction)
+
         for index, video_path in enumerate(bar, start=1):
             if cancel is not None and cancel.is_set():
                 logging.info("Cancelled.")
                 break
             bar.set_description(video_path.stem[:40])
             srt_path = video_path.with_suffix(".srt")
-            if on_file_progress is not None:
-                on_file_progress(0.0)
+            file_bar.reset()
+            _file_progress(0.0)
             _emit("start", index, video_path)
 
             if srt_path.exists() and not force:
@@ -169,10 +185,11 @@ def process_directory(
                     language=language,
                     cancel=cancel,
                     on_segment=on_segment,
-                    on_file_progress=on_file_progress,
+                    on_file_progress=_file_progress,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
                 logging.info("DONE  %s -> %s", video_path.name, srt_path.name)
+                _file_progress(1.0)
                 transcribed += 1
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
                 _emit("done", index, video_path)
@@ -184,6 +201,8 @@ def process_directory(
                 failed.append((video_path, str(exc)))
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
                 _emit("fail", index, video_path)
+
+        file_bar.close()
 
     elapsed = time.monotonic() - t0
     print(

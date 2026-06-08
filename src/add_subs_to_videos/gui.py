@@ -149,6 +149,7 @@ class DropZone(QFrame):
 class _WorkerThread(QThread):
     log_line = Signal(str)
     progress = Signal(object)
+    file_progress = Signal(float)
     finished_run = Signal(bool)
 
     def __init__(
@@ -201,6 +202,7 @@ class _WorkerThread(QThread):
                 cancel=self._cancel,
                 on_progress=self.progress.emit,
                 on_segment=self.log_line.emit,
+                on_file_progress=self.file_progress.emit,
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
@@ -281,12 +283,19 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self._counts_label)
         layout.addLayout(status_row)
 
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 1)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setFormat("Ready")
-        self._progress_bar.setMaximumHeight(22)
-        layout.addWidget(self._progress_bar)
+        self._overall_bar = QProgressBar()
+        self._overall_bar.setRange(0, 1)
+        self._overall_bar.setValue(0)
+        self._overall_bar.setFormat("Ready")
+        self._overall_bar.setMaximumHeight(22)
+        layout.addWidget(self._overall_bar)
+
+        self._file_bar = QProgressBar()
+        self._file_bar.setRange(0, 100)
+        self._file_bar.setValue(0)
+        self._file_bar.setFormat("")
+        self._file_bar.setMaximumHeight(22)
+        layout.addWidget(self._file_bar)
 
         self._final_event = None
 
@@ -339,23 +348,32 @@ class MainWindow(QMainWindow):
         name = event.video.name if event.video else ""
         if event.stage == "start":
             self._log.clear()
-            self._progress_bar.setRange(0, 0)
-            self._progress_bar.setFormat(f"Working on {name}…")
+            self._overall_bar.setRange(0, event.total)
+            self._overall_bar.setValue(event.index - 1)
+            self._overall_bar.setFormat("%v of %m files")
+            self._file_bar.setValue(0)
+            self._file_bar.setFormat(f"{name} — %p%")
             self._status_label.setText(f"Processing {name}")
         elif event.stage in ("done", "skip", "fail"):
-            self._progress_bar.setRange(0, event.total)
-            self._progress_bar.setValue(event.index)
-            self._progress_bar.setFormat("%v of %m")
+            self._overall_bar.setRange(0, event.total)
+            self._overall_bar.setValue(event.index)
+            self._overall_bar.setFormat("%v of %m files")
+            self._file_bar.setValue(100)
             verb = {"done": "Finished", "skip": "Skipped", "fail": "Failed"}[event.stage]
             self._status_label.setText(f"{verb} {name}")
         elif event.stage == "summary":
-            self._progress_bar.setRange(0, event.total)
-            self._progress_bar.setValue(event.total)
+            self._overall_bar.setRange(0, event.total)
+            self._overall_bar.setValue(event.total)
+            self._file_bar.setValue(0)
+            self._file_bar.setFormat("")
             self._final_event = event
 
         self._counts_label.setText(
             f"done {event.done} · skipped {event.skipped} · failed {event.failed}"
         )
+
+    def _on_file_progress(self, fraction: float) -> None:
+        self._file_bar.setValue(round(fraction * 100))
 
     def _cancel_run(self) -> None:
         if self._worker:
@@ -369,9 +387,11 @@ class MainWindow(QMainWindow):
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._final_event = None
-        self._progress_bar.setRange(0, 1)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setFormat("Starting…")
+        self._overall_bar.setRange(0, 1)
+        self._overall_bar.setValue(0)
+        self._overall_bar.setFormat("Starting…")
+        self._file_bar.setValue(0)
+        self._file_bar.setFormat("")
         self._status_label.setText("Preparing…")
         self._counts_label.setText("")
         lang = self._lang_edit.text().strip() or None
@@ -383,6 +403,7 @@ class MainWindow(QMainWindow):
         )
         self._worker.log_line.connect(self._append_log)
         self._worker.progress.connect(self._on_progress)
+        self._worker.file_progress.connect(self._on_file_progress)
         self._worker.finished_run.connect(self._on_done)
         self._worker.start()
 
@@ -397,14 +418,18 @@ class MainWindow(QMainWindow):
             self._counts_label.setText(
                 f"done {e.done} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
             )
-            self._progress_bar.setFormat(
+            self._overall_bar.setFormat(
                 f"Complete — {e.done} transcribed, {e.skipped} skipped,"
                 f" {e.failed} failed in {elapsed_str}"
             )
+            self._file_bar.setValue(0)
+            self._file_bar.setFormat("")
         else:
             label = "Cancelled" if not success else "Done"
             self._status_label.setText(label)
-            self._progress_bar.setFormat(label)
+            self._overall_bar.setFormat(label)
+            self._file_bar.setValue(0)
+            self._file_bar.setFormat("")
         self._append_log("--- Done ---" if success else "--- Finished with errors ---")
 
 
