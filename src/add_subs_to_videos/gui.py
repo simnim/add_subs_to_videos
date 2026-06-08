@@ -548,6 +548,7 @@ def _dev_icon_path() -> Path | None:
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     icon_path = _dev_icon_path()
     if icon_path is not None:
         app.setWindowIcon(QIcon(str(icon_path)))
