@@ -200,6 +200,7 @@ class _WorkerThread(QThread):
                 show_progress=False,
                 cancel=self._cancel,
                 on_progress=self.progress.emit,
+                on_segment=self.log_line.emit,
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
@@ -337,6 +338,7 @@ class MainWindow(QMainWindow):
     def _on_progress(self, event) -> None:
         name = event.video.name if event.video else ""
         if event.stage == "start":
+            self._log.clear()
             self._progress_bar.setRange(0, 0)
             self._progress_bar.setFormat(f"Working on {name}…")
             self._status_label.setText(f"Processing {name}")
