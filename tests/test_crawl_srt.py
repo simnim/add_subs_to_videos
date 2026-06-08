@@ -7,7 +7,13 @@ import pytest
 from add_subs_to_videos.cli import build_parser
 from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
-from add_subs_to_videos.transcribe import _raw_to_dicts, process_directory, transcribe_video
+from add_subs_to_videos.transcribe import (
+    _Cancelled,
+    _probe_duration,
+    _raw_to_dicts,
+    process_directory,
+    transcribe_video,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +335,38 @@ class TestRawToDicts:
 
 
 # ---------------------------------------------------------------------------
+# _probe_duration
+# ---------------------------------------------------------------------------
+
+
+class TestProbeDuration:
+    def test_returns_duration_from_ffprobe_stdout(self, tmp_path, mocker):
+        result = mocker.MagicMock(stdout="12.5\n")
+        mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
+        assert _probe_duration(tmp_path / "clip.mp4") == 12.5
+
+    def test_returns_none_when_ffprobe_missing(self, tmp_path, mocker):
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run", side_effect=FileNotFoundError
+        )
+        assert _probe_duration(tmp_path / "clip.mp4") is None
+
+    def test_returns_none_when_ffprobe_fails(self, tmp_path, mocker):
+        import subprocess
+
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, "ffprobe"),
+        )
+        assert _probe_duration(tmp_path / "clip.mp4") is None
+
+    def test_returns_none_when_output_is_not_a_number(self, tmp_path, mocker):
+        result = mocker.MagicMock(stdout="N/A\n")
+        mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
+        assert _probe_duration(tmp_path / "clip.mp4") is None
+
+
+# ---------------------------------------------------------------------------
 # transcribe_video
 # ---------------------------------------------------------------------------
 
@@ -365,6 +403,154 @@ class TestTranscribeVideo:
         video.touch()
         with pytest.raises(RuntimeError, match="GPU OOM"):
             transcribe_video(video, model=mock_transcribe.model, language=None)
+
+    def test_no_callback_passed_when_cancel_is_none(self, tmp_path, mock_transcribe):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        transcribe_video(video, model=mock_transcribe.model, language=None, cancel=None)
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
+
+    def test_cancel_set_mid_transcription_raises_cancelled(self, tmp_path, mock_transcribe):
+        import threading
+
+        cancel = threading.Event()
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            cancel.set()
+            new_segment_callback(mock_transcribe.raw_segs[1])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        with pytest.raises(_Cancelled):
+            transcribe_video(video, model=mock_transcribe.model, language=None, cancel=cancel)
+
+    def test_cancel_not_yet_set_completes_normally(self, tmp_path, mock_transcribe):
+        import threading
+
+        cancel = threading.Event()
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        result = transcribe_video(video, model=mock_transcribe.model, language=None, cancel=cancel)
+        assert "-->" in result
+
+    def test_no_callback_passed_when_on_segment_is_none(self, tmp_path, mock_transcribe):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        transcribe_video(video, model=mock_transcribe.model, language=None, on_segment=None)
+        mock_transcribe.model.transcribe.assert_called_once_with(str(video), language="")
+
+    def test_on_segment_receives_formatted_lines(self, tmp_path, mock_transcribe):
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            for seg in mock_transcribe.raw_segs:
+                new_segment_callback(seg)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        lines: list[str] = []
+        transcribe_video(
+            video, model=mock_transcribe.model, language=None, on_segment=lines.append
+        )
+        assert lines == [
+            "[00:01 --> 00:03] Hello world",
+            "[00:04 --> 00:06] How are you",
+        ]
+
+    def test_on_segment_skips_blank_text(self, tmp_path, mock_transcribe):
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            blank = mock_transcribe.raw_segs[0]
+            blank.text = "   "
+            new_segment_callback(blank)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        lines: list[str] = []
+        transcribe_video(
+            video, model=mock_transcribe.model, language=None, on_segment=lines.append
+        )
+        assert lines == []
+
+    def test_on_file_progress_receives_fractions_of_known_duration(
+        self, tmp_path, mock_transcribe, mocker
+    ):
+        mocker.patch("add_subs_to_videos.transcribe._probe_duration", return_value=10.0)
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            for seg in mock_transcribe.raw_segs:
+                new_segment_callback(seg)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        fractions: list[float] = []
+        transcribe_video(
+            video,
+            model=mock_transcribe.model,
+            language=None,
+            on_file_progress=fractions.append,
+        )
+        assert fractions == [0.35, 0.6]
+
+    def test_on_file_progress_clamped_to_one(self, tmp_path, mock_transcribe, mocker):
+        mocker.patch("add_subs_to_videos.transcribe._probe_duration", return_value=1.0)
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[1])  # t1 = 6.0s > duration
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        fractions: list[float] = []
+        transcribe_video(
+            video,
+            model=mock_transcribe.model,
+            language=None,
+            on_file_progress=fractions.append,
+        )
+        assert fractions == [1.0]
+
+    def test_on_file_progress_not_called_when_duration_unknown(
+        self, tmp_path, mock_transcribe, mocker
+    ):
+        mocker.patch("add_subs_to_videos.transcribe._probe_duration", return_value=None)
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            for seg in mock_transcribe.raw_segs:
+                new_segment_callback(seg)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        fractions: list[float] = []
+        transcribe_video(
+            video,
+            model=mock_transcribe.model,
+            language=None,
+            on_file_progress=fractions.append,
+        )
+        assert fractions == []
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +674,24 @@ class TestProcessDirectory:
         process_directory(tmp_path, **_COMMON_KWARGS, cancel=cancel)
 
         assert mock_transcribe.model.transcribe.call_count == 1
+        assert not (tmp_path / "b.srt").exists()
+
+    def test_cancel_set_mid_transcription_stops_without_writing_srt(self, tmp_path, mock_transcribe):
+        import threading
+        (tmp_path / "a.mp4").touch()
+        (tmp_path / "b.mp4").touch()
+        cancel = threading.Event()
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            cancel.set()
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        process_directory(tmp_path, **_COMMON_KWARGS, cancel=cancel)
+
+        assert mock_transcribe.model.transcribe.call_count == 1
+        assert not (tmp_path / "a.srt").exists()
         assert not (tmp_path / "b.srt").exists()
 
     def test_cancel_already_set_skips_all_files(self, tmp_path, mock_transcribe):

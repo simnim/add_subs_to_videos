@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
 import threading
 import time
@@ -14,6 +15,10 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 from .files import find_videos
 from .srt import segments_to_srt
+
+
+class _Cancelled(Exception):
+    """Raised from a transcription callback to abort mid-file when cancelled."""
 
 
 @dataclass
@@ -35,13 +40,58 @@ def _raw_to_dicts(raw_segments) -> list[dict]:
     ]
 
 
+def _format_log_timestamp(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _probe_duration(path: Path) -> float | None:
+    """Returns the media duration in seconds via `ffprobe`, or None if unavailable."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "csv=p=0",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return float(result.stdout.strip())
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
 def transcribe_video(
     video_path: Path,
     *,
     model: Model,
     language: str | None,
+    cancel: threading.Event | None = None,
+    on_segment: Callable[[str], None] | None = None,
+    on_file_progress: Callable[[float], None] | None = None,
 ) -> str:
-    raw_segs = model.transcribe(str(video_path), language=language or "")
+    extra: dict = {}
+    if cancel is not None or on_segment is not None or on_file_progress is not None:
+        duration = _probe_duration(video_path) if on_file_progress is not None else None
+
+        def _on_new_segment(segment) -> None:
+            if cancel is not None and cancel.is_set():
+                raise _Cancelled()
+            if on_segment is not None:
+                text = segment.text.strip()
+                if text:
+                    start = _format_log_timestamp(segment.t0 / 100.0)
+                    end = _format_log_timestamp(segment.t1 / 100.0)
+                    on_segment(f"[{start} --> {end}] {text}")
+            if on_file_progress is not None and duration:
+                on_file_progress(min(segment.t1 / 100.0 / duration, 1.0))
+
+        extra["new_segment_callback"] = _on_new_segment
+
+    raw_segs = model.transcribe(str(video_path), language=language or "", **extra)
     segments = _raw_to_dicts(raw_segs)
     return segments_to_srt(segments)
 
@@ -55,6 +105,8 @@ def process_directory(
     show_progress: bool = True,
     cancel: threading.Event | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
+    on_segment: Callable[[str], None] | None = None,
+    on_file_progress: Callable[[float], None] | None = None,
 ) -> None:
     videos = find_videos(root)
     if not videos:
@@ -98,6 +150,8 @@ def process_directory(
                 break
             bar.set_description(video_path.stem[:40])
             srt_path = video_path.with_suffix(".srt")
+            if on_file_progress is not None:
+                on_file_progress(0.0)
             _emit("start", index, video_path)
 
             if srt_path.exists() and not force:
@@ -113,12 +167,18 @@ def process_directory(
                     video_path,
                     model=model,
                     language=language,
+                    cancel=cancel,
+                    on_segment=on_segment,
+                    on_file_progress=on_file_progress,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
                 logging.info("DONE  %s -> %s", video_path.name, srt_path.name)
                 transcribed += 1
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
                 _emit("done", index, video_path)
+            except _Cancelled:
+                logging.info("Cancelled.")
+                break
             except Exception as exc:
                 logging.error("FAIL  %s: %s", video_path, exc, exc_info=True)
                 failed.append((video_path, str(exc)))

@@ -10,6 +10,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QFileDialog
 
 from add_subs_to_videos.gui import DropZone, MainWindow, _dev_icon_path, _WorkerThread
+from add_subs_to_videos.transcribe import ProgressEvent
 
 
 def _mime_event(paths: list[Path]) -> MagicMock:
@@ -81,6 +82,13 @@ class TestDropZone:
         assert dz._name_label.text() == tmp_path.name
         assert dz.toolTip() == str(tmp_path)
 
+    def test_drop_keeps_browse_hint_alongside_path(self, dz, tmp_path):
+        assert dz._hint_label.text() == dz._EMPTY_HINT
+        dz.dropEvent(_mime_event([tmp_path]))
+        assert dz._hint_label.text() == dz._SELECTED_HINT
+        assert dz._hint_label.text()
+        assert tmp_path.name in dz._path_label.text()
+
     def test_drop_emits_for_video_file(self, dz, tmp_path):
         f = tmp_path / "clip.mp4"
         f.touch()
@@ -138,7 +146,31 @@ class TestWorkerThread:
             show_progress=False,
             cancel=ANY,
             on_progress=ANY,
+            on_segment=ANY,
+            on_file_progress=ANY,
         )
+
+    def test_segment_line_emitted_from_on_segment_callback(self, thread, mock_pd):
+        lines = []
+        thread.segment_line.connect(lines.append)
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_segment"]("[00:00 --> 00:02] hello")
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert lines == ["[00:00 --> 00:02] hello"]
+
+    def test_file_progress_emitted_from_on_file_progress_callback(self, thread, mock_pd):
+        fractions = []
+        thread.file_progress.connect(fractions.append)
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_file_progress"](0.5)
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert fractions == [0.5]
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
         thread = _WorkerThread(tmp_path, "small", "fr", False)
@@ -247,9 +279,36 @@ class TestMainWindow:
         window._drop_zone.folder_dropped.emit(tmp_path)
         mock_save.assert_called_once_with({
             "model": window._model_combo.currentText(),
-            "language": window._lang_edit.text().strip(),
+            "language": window._lang_combo.currentData(),
             "directory": str(tmp_path),
         })
+
+    def test_folder_dropped_shows_clear_button(self, window, tmp_path):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        assert not window._clear_btn.isHidden()
+        assert not window._change_hint.isHidden()
+
+    def test_clear_button_resets_folder_state(self, window, tmp_path):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._clear_btn.click()
+        assert window._folder is None
+        assert not window._run_btn.isEnabled()
+        assert window._clear_btn.isHidden()
+        assert window._change_hint.isHidden()
+        assert window._drop_zone._folder_path is None
+
+    def test_clear_button_persists_cleared_directory(self, mocker, window, tmp_path):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        mock_save = mocker.patch("add_subs_to_videos.gui.save_config")
+        window._clear_btn.click()
+        mock_save.assert_called_once_with({
+            "model": window._model_combo.currentText(),
+            "language": window._lang_combo.currentData(),
+            "directory": "",
+        })
+
+    def test_clear_button_hidden_initially(self, window):
+        assert window._clear_btn.isHidden()
 
     def test_load_prefs_sets_model(self, mocker, qtbot):
         mocker.patch("add_subs_to_videos.gui.load_config", return_value={"model": "large-v3"})
@@ -261,13 +320,14 @@ class TestMainWindow:
         mocker.patch("add_subs_to_videos.gui.load_config", return_value={"language": "ja"})
         w = MainWindow()
         qtbot.addWidget(w)
-        assert w._lang_edit.text() == "ja"
+        assert w._lang_combo.currentData() == "ja"
 
     def test_load_prefs_restores_valid_folder_and_enables_run(self, mocker, qtbot, tmp_path):
         mocker.patch("add_subs_to_videos.gui.load_config", return_value={"directory": str(tmp_path)})
         w = MainWindow()
         qtbot.addWidget(w)
         assert w._folder == tmp_path
+        assert not w._clear_btn.isHidden()
         assert w._run_btn.isEnabled()
 
     def test_load_prefs_ignores_nonexistent_directory(self, mocker, qtbot):
@@ -280,7 +340,7 @@ class TestMainWindow:
         mock_save = mocker.patch("add_subs_to_videos.gui.save_config")
         window._folder = tmp_path
         window._model_combo.setCurrentText("tiny")
-        window._lang_edit.setText("fr")
+        window._lang_combo.setCurrentIndex(window._lang_combo.findData("fr"))
         window._save_prefs()
         mock_save.assert_called_once_with({
             "model": "tiny",
@@ -306,6 +366,74 @@ class TestMainWindow:
         window._on_done(False)
         assert window._run_btn.isEnabled()
         assert "errors" in window._log.toPlainText()
+
+    @staticmethod
+    def _event(stage, index=1, total=10, video=None, **extra):
+        return ProgressEvent(
+            stage=stage,
+            index=index,
+            total=total,
+            video=video,
+            done=extra.pop("done", 0),
+            skipped=extra.pop("skipped", 0),
+            failed=extra.pop("failed", 0),
+            **extra,
+        )
+
+    def test_progress_start_keeps_bar_determinate_and_starts_spinner(self, window, tmp_path):
+        video = tmp_path / "movie.mp4"
+        window._on_progress(self._event("start", index=3, total=10, video=video))
+        assert window._progress_bar.minimum() == 0
+        assert window._progress_bar.maximum() == 10
+        assert window._progress_bar.value() == 2
+        assert window._progress_bar.format() == "%v of %m"
+        assert not window._spinner.isHidden()
+        assert window._spinner._timer.isActive()
+
+    def test_progress_start_shows_and_resets_file_progress_bar(self, window, tmp_path):
+        video = tmp_path / "movie.mp4"
+        window._file_progress_bar.setValue(42)
+        window._on_progress(self._event("start", index=3, total=10, video=video))
+        assert not window._file_progress_bar.isHidden()
+        assert window._file_progress_bar.value() == 0
+
+    def test_progress_start_clears_log(self, window, tmp_path):
+        video = tmp_path / "movie.mp4"
+        window._append_log("[00:00 --> 00:02] leftover from previous video")
+        window._on_progress(self._event("start", index=1, total=10, video=video))
+        assert window._log.toPlainText() == ""
+
+    def test_progress_done_advances_bar_and_stops_spinner(self, window, tmp_path):
+        video = tmp_path / "movie.mp4"
+        window._on_progress(self._event("start", index=3, total=10, video=video))
+        window._on_progress(self._event("done", index=3, total=10, video=video))
+        assert window._progress_bar.value() == 3
+        assert window._progress_bar.format() == "%v of %m"
+        assert window._spinner.isHidden()
+        assert not window._spinner._timer.isActive()
+        assert window._file_progress_bar.isHidden()
+
+    @pytest.mark.parametrize("stage", ["skip", "fail"])
+    def test_progress_skip_and_fail_advance_bar_and_stop_spinner(self, window, tmp_path, stage):
+        video = tmp_path / "movie.mp4"
+        window._on_progress(self._event("start", index=2, total=5, video=video))
+        window._on_progress(self._event(stage, index=2, total=5, video=video))
+        assert window._progress_bar.value() == 2
+        assert window._progress_bar.format() == "%v of %m"
+        assert window._spinner.isHidden()
+        assert window._file_progress_bar.isHidden()
+
+    def test_progress_summary_completes_bar_and_stops_spinner(self, window, tmp_path):
+        window._on_progress(self._event("start", index=5, total=5, video=tmp_path / "movie.mp4"))
+        window._on_progress(self._event("summary", index=5, total=5, elapsed=1.0))
+        assert window._progress_bar.value() == 5
+        assert window._progress_bar.maximum() == 5
+        assert window._spinner.isHidden()
+        assert window._file_progress_bar.isHidden()
+
+    def test_on_file_progress_sets_bar_value_from_fraction(self, window):
+        window._on_file_progress(0.43)
+        assert window._file_progress_bar.value() == 43
 
     def test_cancel_button_disabled_initially(self, window):
         assert not window._cancel_btn.isEnabled()
@@ -333,6 +461,11 @@ class TestMainWindow:
         window._cancel_btn.setEnabled(True)
         window._cancel_run()
         assert not window._cancel_btn.isEnabled()
+
+    def test_cancel_run_shows_cancelling_status(self, window, mocker):
+        window._worker = mocker.MagicMock()
+        window._cancel_run()
+        assert window._status_label.text() == "Cancelling…"
 
 
 # ---------------------------------------------------------------------------
