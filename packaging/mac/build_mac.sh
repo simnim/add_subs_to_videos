@@ -20,6 +20,7 @@ print(data["project"]["version"])
 EOF
 )
 echo "Building version: $VERSION"
+export APP_VERSION="$VERSION"
 
 # Convert SVG icon to .icns
 echo "Converting icon..."
@@ -50,11 +51,25 @@ uv run pyinstaller \
     --noconfirm
 
 APP_PATH="dist/Add Subs to Videos.app"
+CLI_PATH="dist/add_subs_to_videos"
 if [ ! -d "$APP_PATH" ]; then
     echo "Error: .app bundle not found at $APP_PATH"
     exit 1
 fi
+if [ ! -e "$CLI_PATH" ]; then
+    echo "Error: CLI binary not found at $CLI_PATH"
+    exit 1
+fi
 echo "App bundle built: $APP_PATH"
+echo "CLI binary built: $CLI_PATH"
+
+# Stage the CLI binary + installer helper for the DMG
+DMG_STAGING="build/dmg_staging"
+rm -rf "$DMG_STAGING"
+mkdir -p "$DMG_STAGING"
+cp -R "$CLI_PATH" "$DMG_STAGING/add_subs_to_videos"
+cp "packaging/mac/Install CLI.command" "$DMG_STAGING/Install CLI.command"
+chmod +x "$DMG_STAGING/add_subs_to_videos" "$DMG_STAGING/Install CLI.command"
 
 # Build .dmg
 echo "Building .dmg..."
@@ -68,8 +83,12 @@ create-dmg \
     --icon "Add Subs to Videos.app" 200 185 \
     --hide-extension "Add Subs to Videos.app" \
     --app-drop-link 600 185 \
+    --icon "Install CLI.command" 400 300 \
+    --icon "add_subs_to_videos" 600 300 \
     "$DMG_NAME" \
-    "$APP_PATH"
+    "$APP_PATH" \
+    "$DMG_STAGING/Install CLI.command" \
+    "$DMG_STAGING/add_subs_to_videos"
 
 echo ""
 echo "Done: $DMG_NAME"

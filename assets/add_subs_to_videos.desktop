@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Add Subs to Videos
-Comment=Recursive video-to-SRT transcription using whisper.cpp
-Exec=x-terminal-emulator -e add_subs_to_videos
-Icon=add_subs_to_videos
-Type=Application
-Categories=AudioVideo;Video;
-Terminal=false
-Keywords=subtitles;transcribe;whisper;srt;video;

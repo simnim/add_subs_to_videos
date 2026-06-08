@@ -8,35 +8,35 @@ It crawls a directory recursively, transcribes every video it finds using [whisp
 
 ## Install
 
+Every option below gives you both the `add_subs_to_videos` CLI command and an
+"Add Subs to Videos" desktop GUI.
+
 **Ubuntu (snap — recommended, no prerequisites):**
 ```bash
 sudo snap install add-subs-to-videos
 ```
+Installs the `add-subs-to-videos` CLI plus an "Add Subs to Videos" launcher in your applications menu (`add-subs-to-videos-gui`).
 
 **macOS (.dmg — no prerequisites):**
-Download `Add Subs to Videos-<version>.dmg` from [GitHub Releases](https://github.com/simnim/add_subs_to_videos/releases), open it, and drag the app to Applications.
-
-**macOS (CLI via pipx):**
-```bash
-brew install cmake ffmpeg
-pipx install "add-subs-to-videos[gui]"
-```
+Download `Add Subs to Videos-<version>.dmg` from [GitHub Releases](https://github.com/simnim/add_subs_to_videos/releases), open it, and drag the app to Applications. The DMG also includes a standalone `add_subs_to_videos` CLI binary and an `Install CLI.command` helper — double-click it to symlink the CLI into `/usr/local/bin` so `add_subs_to_videos --help` works from a terminal.
 > Metal GPU acceleration is auto-detected on macOS — no extra steps needed.
 
-**Any platform with Python 3.12+:**
+**Any platform with Python 3.12+ (via pip/pipx):**
 ```bash
-pip install add-subs-to-videos
+pip install "add-subs-to-videos[gui]"
 # or
-pipx install add-subs-to-videos
+pipx install "add-subs-to-videos[gui]"
 ```
+This installs both the `add_subs_to_videos` CLI and the `add-subs-to-videos-gui` GUI entry point. Drop `[gui]` if you only want the CLI.
 
-> `pywhispercpp` compiles a C++ extension at install time (requires CMake). On Linux with CUDA:
+> `pywhispercpp` compiles a C++ extension at install time (requires CMake — `brew install cmake ffmpeg` on macOS). On Linux with CUDA:
 > ```bash
-> WHISPER_CUDA=1 pip install add-subs-to-videos
+> WHISPER_CUDA=1 pip install "add-subs-to-videos[gui]"
 > ```
 
 ## Usage
 
+**CLI:**
 ```bash
 add_subs_to_videos /path/to/videos
 add_subs_to_videos /path/to/videos --model large-v3 --language en
@@ -44,3 +44,6 @@ add_subs_to_videos /path/to/videos --force   # re-transcribe even if .srt exists
 ```
 
 `movie.mp4` → `movie.srt`, placed in the same directory. Supports `.mp4`, `.mkv`, `.avi`, `.mov`, `.m4v`, `.webm`, and more.
+
+**GUI:**
+Launch "Add Subs to Videos" from your applications menu, or run `add-subs-to-videos-gui` from a terminal. Drag a folder of videos in, pick a model and language, and watch progress live.

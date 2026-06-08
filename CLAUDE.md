@@ -89,7 +89,7 @@ src/add_subs_to_videos/
 └── transcribe.py # Core pipeline: whisper.cpp transcription
 ```
 
-`assets/icon.svg` and `assets/add_subs_to_videos.desktop` provide the GUI's app icon and Linux desktop entry — located at runtime by `gui.py`'s `_dev_icon_path()` and bundled via `snap/snapcraft.yaml`.
+`assets/icon.svg` provides the GUI's app icon — located at runtime by `gui.py`'s `_dev_icon_path()` and bundled via `snap/snapcraft.yaml`. `assets/add-subs-to-videos-gui.desktop` provides the Linux desktop entry for the GUI launcher.
 
 **Pipeline in `transcribe.py`:**
 1. Load `pywhispercpp.model.Model` once per run

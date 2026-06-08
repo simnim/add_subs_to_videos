@@ -10,10 +10,14 @@ description: |
 
   Supports .mp4, .mkv, .avi, .mov, .m4v, .webm, .ts, .flv, and more.
 
+  Provides both the `add-subs-to-videos` CLI command and an "Add Subs to
+  Videos" desktop GUI launcher (drag-and-drop, progress, log).
+
   Usage:
     add-subs-to-videos /path/to/videos
     add-subs-to-videos /path/to/videos --model large-v3 --language en
     add-subs-to-videos /path/to/videos --force
+    add-subs-to-videos-gui   # or launch "Add Subs to Videos" from your apps menu
 
 icon: assets/icon.svg
 grade: stable
@@ -22,6 +26,14 @@ confinement: strict
 apps:
   add-subs-to-videos:
     command: bin/add_subs_to_videos
+    plugs:
+      - home
+      - removable-media
+      - network         # whisper.cpp downloads model weights on first use
+  add-subs-to-videos-gui:
+    command: bin/add-subs-to-videos-gui
+    desktop: assets/add-subs-to-videos-gui.desktop
+    extensions: [gnome]
     plugs:
       - home
       - removable-media
@@ -36,9 +48,28 @@ parts:
       - python3-dev
       - libffi-dev
       - pkg-config
+    python-packages:
+      - pyside6        # installs the `gui` extra's GUI runtime alongside the CLI
     stage-packages:
       - ffmpeg
       - libgomp1        # OpenMP runtime required by whisper.cpp
+      # Qt6/PySide6 GUI runtime libraries
+      - libegl1
+      - libgl1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libdbus-1-3
+      - libxcb-cursor0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
+      - libxcb-randr0
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-xinerama0
+      - libxcb-xkb1
+      - libfontconfig1
+      - libfreetype6
     override-pull: |
       craftctl default
       VER=$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")

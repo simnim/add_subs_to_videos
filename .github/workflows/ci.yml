@@ -22,7 +22,12 @@ jobs:
 
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt update && sudo apt install -y ffmpeg
+        run: |
+          sudo apt update && sudo apt install -y ffmpeg \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libfontconfig1 libfreetype6
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
