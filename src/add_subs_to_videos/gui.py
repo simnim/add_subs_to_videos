@@ -349,7 +349,7 @@ class MainWindow(QMainWindow):
         if event.stage == "start":
             self._log.clear()
             self._overall_bar.setRange(0, event.total)
-            self._overall_bar.setValue(event.index - 1)
+            self._overall_bar.setValue(event.index)
             self._overall_bar.setFormat("%v of %m files")
             self._file_bar.setValue(0)
             self._file_bar.setFormat(f"{name} — %p%")
