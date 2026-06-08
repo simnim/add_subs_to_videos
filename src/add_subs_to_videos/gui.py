@@ -236,11 +236,17 @@ class MainWindow(QMainWindow):
         self._drop_zone.folder_dropped.connect(self._on_folder_set)
         layout.addWidget(self._drop_zone)
 
+        hint_row = QHBoxLayout()
         self._change_hint = QLabel("Drop a new folder or video file above, or click to change")
-        self._change_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._change_hint.setStyleSheet("color: palette(placeholder-text);")
         self._change_hint.setVisible(False)
-        layout.addWidget(self._change_hint)
+        hint_row.addWidget(self._change_hint, 1)
+
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.clicked.connect(self._clear_selection)
+        self._clear_btn.setHidden(True)
+        hint_row.addWidget(self._clear_btn)
+        layout.addLayout(hint_row)
 
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Model:"))
@@ -272,11 +278,6 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setMinimumHeight(36)
         self._cancel_btn.clicked.connect(self._cancel_run)
         btn_row.addWidget(self._cancel_btn)
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setMinimumHeight(36)
-        self._clear_btn.clicked.connect(self._clear_selection)
-        self._clear_btn.setHidden(True)
-        btn_row.addWidget(self._clear_btn)
         layout.addLayout(btn_row)
 
         status_row = QHBoxLayout()
