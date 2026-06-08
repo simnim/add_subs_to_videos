@@ -77,6 +77,24 @@ class DropZone(QFrame):
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._icon_label)
 
+        self._selection_name_label = QLabel()
+        selection_name_font = QFont()
+        selection_name_font.setPointSize(18)
+        selection_name_font.setBold(True)
+        self._selection_name_label.setFont(selection_name_font)
+        self._selection_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._selection_name_label.setVisible(False)
+        layout.addWidget(self._selection_name_label)
+
+        self._selection_path_label = QLabel()
+        selection_path_font = QFont()
+        selection_path_font.setPointSize(11)
+        self._selection_path_label.setFont(selection_path_font)
+        self._selection_path_label.setStyleSheet("color: palette(placeholder-text);")
+        self._selection_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._selection_path_label.setVisible(False)
+        layout.addWidget(self._selection_path_label)
+
         self._name_label = QLabel(self._EMPTY_NAME)
         name_font = QFont()
         name_font.setPointSize(14)
@@ -93,42 +111,35 @@ class DropZone(QFrame):
         self._path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._path_label)
 
-        self._selection_label = QLabel()
-        selection_font = QFont()
-        selection_font.setPointSize(11)
-        self._selection_label.setFont(selection_font)
-        self._selection_label.setStyleSheet("color: palette(placeholder-text);")
-        self._selection_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._selection_label.setVisible(False)
-        layout.addWidget(self._selection_label)
-
         self.set_folder(None)
 
-    def _update_selection_label(self, text: str) -> None:
-        metrics = QFontMetrics(self._selection_label.font())
+    def _update_selection_path_label(self, text: str) -> None:
+        metrics = QFontMetrics(self._selection_path_label.font())
         elided = metrics.elidedText(
             text, Qt.TextElideMode.ElideMiddle, self.width() - 32 or 320
         )
-        self._selection_label.setText(elided)
+        self._selection_path_label.setText(elided)
 
     def set_folder(self, path: Path | None) -> None:
         self._folder_path = path
         if path is None:
             self.setToolTip("")
-            self._selection_label.setVisible(False)
-            self._selection_label.setText("")
+            self._selection_name_label.setVisible(False)
+            self._selection_name_label.setText("")
+            self._selection_path_label.setVisible(False)
+            self._selection_path_label.setText("")
         else:
             icon = "\U0001F4C1" if path.is_dir() else "\U0001F3AC"
-            self._selection_label.setVisible(True)
-            self._update_selection_label(f"{icon} {path.name or str(path)} — {path}")
+            self._selection_name_label.setVisible(True)
+            self._selection_name_label.setText(f"{icon} {path.name or str(path)}")
+            self._selection_path_label.setVisible(True)
+            self._update_selection_path_label(str(path))
             self.setToolTip(str(path))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._folder_path is not None:
-            icon = "\U0001F4C1" if self._folder_path.is_dir() else "\U0001F3AC"
-            name = self._folder_path.name or str(self._folder_path)
-            self._update_selection_label(f"{icon} {name} — {self._folder_path}")
+            self._update_selection_path_label(str(self._folder_path))
 
     @staticmethod
     def _is_acceptable(path: Path) -> bool:
