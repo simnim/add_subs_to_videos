@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
@@ -27,6 +26,36 @@ from PySide6.QtWidgets import (
 from .config import load_config, save_config
 from .files import VIDEO_EXTENSIONS
 from .transcribe import process_directory
+
+# whisper.cpp's canonical (code, English name) language table —
+# mirrors Model.available_languages() / whisper_lang_str ordering.
+_LANGUAGES: list[tuple[str, str]] = [
+    ("en", "English"), ("zh", "Chinese"), ("de", "German"), ("es", "Spanish"),
+    ("ru", "Russian"), ("ko", "Korean"), ("fr", "French"), ("ja", "Japanese"),
+    ("pt", "Portuguese"), ("tr", "Turkish"), ("pl", "Polish"), ("ca", "Catalan"),
+    ("nl", "Dutch"), ("ar", "Arabic"), ("sv", "Swedish"), ("it", "Italian"),
+    ("id", "Indonesian"), ("hi", "Hindi"), ("fi", "Finnish"), ("vi", "Vietnamese"),
+    ("he", "Hebrew"), ("uk", "Ukrainian"), ("el", "Greek"), ("ms", "Malay"),
+    ("cs", "Czech"), ("ro", "Romanian"), ("da", "Danish"), ("hu", "Hungarian"),
+    ("ta", "Tamil"), ("no", "Norwegian"), ("th", "Thai"), ("ur", "Urdu"),
+    ("hr", "Croatian"), ("bg", "Bulgarian"), ("lt", "Lithuanian"), ("la", "Latin"),
+    ("mi", "Maori"), ("ml", "Malayalam"), ("cy", "Welsh"), ("sk", "Slovak"),
+    ("te", "Telugu"), ("fa", "Persian"), ("lv", "Latvian"), ("bn", "Bengali"),
+    ("sr", "Serbian"), ("az", "Azerbaijani"), ("sl", "Slovenian"), ("kn", "Kannada"),
+    ("et", "Estonian"), ("mk", "Macedonian"), ("br", "Breton"), ("eu", "Basque"),
+    ("is", "Icelandic"), ("hy", "Armenian"), ("ne", "Nepali"), ("mn", "Mongolian"),
+    ("bs", "Bosnian"), ("kk", "Kazakh"), ("sq", "Albanian"), ("sw", "Swahili"),
+    ("gl", "Galician"), ("mr", "Marathi"), ("pa", "Punjabi"), ("si", "Sinhala"),
+    ("km", "Khmer"), ("sn", "Shona"), ("yo", "Yoruba"), ("so", "Somali"),
+    ("af", "Afrikaans"), ("oc", "Occitan"), ("ka", "Georgian"), ("be", "Belarusian"),
+    ("tg", "Tajik"), ("sd", "Sindhi"), ("gu", "Gujarati"), ("am", "Amharic"),
+    ("yi", "Yiddish"), ("lo", "Lao"), ("uz", "Uzbek"), ("fo", "Faroese"),
+    ("ht", "Haitian Creole"), ("ps", "Pashto"), ("tk", "Turkmen"), ("nn", "Nynorsk"),
+    ("mt", "Maltese"), ("sa", "Sanskrit"), ("lb", "Luxembourgish"), ("my", "Myanmar"),
+    ("bo", "Tibetan"), ("tl", "Tagalog"), ("mg", "Malagasy"), ("as", "Assamese"),
+    ("tt", "Tatar"), ("haw", "Hawaiian"), ("ln", "Lingala"), ("ha", "Hausa"),
+    ("ba", "Bashkir"), ("jw", "Javanese"), ("su", "Sundanese"), ("yue", "Cantonese"),
+]
 
 
 class _QtLogHandler(logging.Handler):
@@ -309,10 +338,12 @@ class MainWindow(QMainWindow):
         opts.addWidget(self._model_combo)
         opts.addSpacing(16)
         opts.addWidget(QLabel("Language:"))
-        self._lang_edit = QLineEdit()
-        self._lang_edit.setPlaceholderText("auto")
-        self._lang_edit.setFixedWidth(60)
-        opts.addWidget(self._lang_edit)
+        self._lang_combo = QComboBox()
+        self._lang_combo.addItem("Auto-detect", "")
+        for code, name in _LANGUAGES:
+            self._lang_combo.addItem(f"{name} ({code})", code)
+        self._lang_combo.setMinimumWidth(160)
+        opts.addWidget(self._lang_combo)
         opts.addSpacing(16)
         self._force_check = QCheckBox("Force re-run")
         opts.addWidget(self._force_check)
@@ -373,7 +404,9 @@ class MainWindow(QMainWindow):
     def _load_prefs(self) -> None:
         cfg = load_config()
         self._model_combo.setCurrentText(cfg.get("model", "medium"))
-        self._lang_edit.setText(cfg.get("language", ""))
+        saved_lang = cfg.get("language", "")
+        idx = self._lang_combo.findData(saved_lang)
+        self._lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
         directory = cfg.get("directory", "")
         if directory and Path(directory).exists():
             path = Path(directory)
@@ -386,7 +419,7 @@ class MainWindow(QMainWindow):
     def _save_prefs(self) -> None:
         save_config({
             "model": self._model_combo.currentText(),
-            "language": self._lang_edit.text().strip(),
+            "language": self._lang_combo.currentData() or "",
             "directory": str(self._folder) if self._folder else "",
         })
 
@@ -467,7 +500,7 @@ class MainWindow(QMainWindow):
         self._file_bar.setFormat("")
         self._status_label.setText("Preparing…")
         self._counts_label.setText("")
-        lang = self._lang_edit.text().strip() or None
+        lang = self._lang_combo.currentData() or None
         self._worker = _WorkerThread(
             self._folder,
             self._model_combo.currentText(),
