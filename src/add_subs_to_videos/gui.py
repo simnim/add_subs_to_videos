@@ -45,15 +45,15 @@ class DropZone(QFrame):
         "DropZone {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 12px;"
-        "  background: palette(button);"
+        "  background: #E8F4FD;"
         "}"
         "DropZone:hover {"
-        "  background: palette(light);"
+        "  background: #D6EAFB;"
         "  border: 1px solid palette(highlight);"
         "}"
     )
 
-    _EMPTY_NAME = "\U0001F5B1️ Drop a folder or video file here ➡️\U0001F449 this"
+    _EMPTY_NAME = "Drop a folder or video file here"
     _EMPTY_HINT = "or click to browse"
 
     def __init__(self) -> None:
@@ -70,7 +70,7 @@ class DropZone(QFrame):
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._icon_label = QLabel("\U0001F5B1")
+        self._icon_label = QLabel("\U0001F5B1️ ➡️ \U0001F449")
         icon_font = QFont()
         icon_font.setPointSize(28)
         self._icon_label.setFont(icon_font)
