@@ -241,6 +241,36 @@ class _WorkerThread(QThread):
 
 
 class MainWindow(QMainWindow):
+    _RUN_BTN_STYLE = (
+        "QPushButton:enabled {"
+        "  background: #D6EAFB;"
+        "  border: 1px solid #2E8B57;"
+        "  border-radius: 6px;"
+        "}"
+        "QPushButton:disabled {"
+        "  background: palette(button);"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 6px;"
+        "  color: palette(placeholder-text);"
+        "}"
+    )
+    _CANCEL_BTN_STYLE_IDLE = (
+        "QPushButton {"
+        "  background: palette(button);"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 6px;"
+        "  color: palette(button-text);"
+        "}"
+    )
+    _CANCEL_BTN_STYLE_ACTIVE = (
+        "QPushButton {"
+        "  background: palette(button);"
+        "  border: 1px solid #C0392B;"
+        "  border-radius: 6px;"
+        "  color: #C0392B;"
+        "}"
+    )
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Add Subtitles to Videos")
@@ -293,11 +323,13 @@ class MainWindow(QMainWindow):
         self._run_btn = QPushButton("Run")
         self._run_btn.setEnabled(False)
         self._run_btn.setMinimumHeight(36)
+        self._run_btn.setStyleSheet(self._RUN_BTN_STYLE)
         self._run_btn.clicked.connect(self._run)
         btn_row.addWidget(self._run_btn)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setMinimumHeight(36)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._cancel_btn.clicked.connect(self._cancel_run)
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
@@ -418,6 +450,7 @@ class MainWindow(QMainWindow):
         if self._worker:
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
 
     def _run(self) -> None:
         if not self._folder:
@@ -425,6 +458,7 @@ class MainWindow(QMainWindow):
         self._log.clear()
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
         self._final_event = None
         self._overall_bar.setRange(0, 1)
         self._overall_bar.setValue(0)
@@ -449,6 +483,7 @@ class MainWindow(QMainWindow):
     def _on_done(self, success: bool) -> None:
         self._run_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         if self._final_event is not None:
             e = self._final_event
             mins, secs = divmod(int(e.elapsed or 0), 60)
