@@ -303,7 +303,7 @@ class TestMainWindow:
         window._clear_btn.click()
         mock_save.assert_called_once_with({
             "model": window._model_combo.currentText(),
-            "language": window._lang_combo.currentData(),
+            "language": window._lang_edit.text().strip(),
             "directory": "",
         })
 

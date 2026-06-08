@@ -272,6 +272,11 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setMinimumHeight(36)
         self._cancel_btn.clicked.connect(self._cancel_run)
         btn_row.addWidget(self._cancel_btn)
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setMinimumHeight(36)
+        self._clear_btn.clicked.connect(self._clear_selection)
+        self._clear_btn.setHidden(True)
+        btn_row.addWidget(self._clear_btn)
         layout.addLayout(btn_row)
 
         status_row = QHBoxLayout()
@@ -321,6 +326,7 @@ class MainWindow(QMainWindow):
             self._folder = path
             self._run_btn.setEnabled(True)
             self._change_hint.setVisible(True)
+            self._clear_btn.setHidden(False)
 
     def _save_prefs(self) -> None:
         save_config({
@@ -337,6 +343,15 @@ class MainWindow(QMainWindow):
         self._folder = path
         self._run_btn.setEnabled(True)
         self._change_hint.setVisible(True)
+        self._clear_btn.setHidden(False)
+        self._save_prefs()
+
+    def _clear_selection(self) -> None:
+        self._folder = None
+        self._drop_zone.set_folder(None)
+        self._run_btn.setEnabled(False)
+        self._clear_btn.setHidden(True)
+        self._change_hint.setVisible(False)
         self._save_prefs()
 
     def _append_log(self, line: str) -> None:
