@@ -53,7 +53,7 @@ class DropZone(QFrame):
         "}"
     )
 
-    _EMPTY_NAME = "\U0001F5B1️ Drop a folder or video file here ➡️\U0001F449 this"
+    _EMPTY_NAME = "\U0001F5B1️\U0001F5B1️ Drop a folder or video file here ➡️➡️\U0001F449\U0001F449 this"
     _EMPTY_HINT = "or click to browse"
 
     def __init__(self) -> None:
