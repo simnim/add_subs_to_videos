@@ -27,6 +27,11 @@ from .config import load_config, save_config
 from .files import VIDEO_EXTENSIONS
 from .transcribe import process_directory
 
+# QProgressBar values are integers, so the overall bar's range is scaled up by
+# this factor to give smooth sub-file resolution when combining the count of
+# completed videos with the current video's fractional progress.
+_OVERALL_PROGRESS_SCALE = 1000
+
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
 _LANGUAGES: list[tuple[str, str]] = [
@@ -390,6 +395,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._file_bar)
 
         self._final_event = None
+        self._current_video_index = 0
+        self._current_total = 0
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
@@ -450,24 +457,27 @@ class MainWindow(QMainWindow):
 
     def _on_progress(self, event) -> None:
         name = event.video.name if event.video else ""
+        scale = _OVERALL_PROGRESS_SCALE
         if event.stage == "start":
             self._log.clear()
-            self._overall_bar.setRange(0, event.total)
-            self._overall_bar.setValue(event.index)
-            self._overall_bar.setFormat("%v of %m files")
+            self._current_video_index = event.index
+            self._current_total = event.total
+            self._overall_bar.setRange(0, event.total * scale)
+            self._overall_bar.setValue((event.index - 1) * scale)
+            self._overall_bar.setFormat(f"{event.index} of {event.total} files")
             self._file_bar.setValue(0)
             self._file_bar.setFormat(f"{name} — %p%")
             self._status_label.setText(f"Processing {name}")
         elif event.stage in ("done", "skip", "fail"):
-            self._overall_bar.setRange(0, event.total)
-            self._overall_bar.setValue(event.index)
-            self._overall_bar.setFormat("%v of %m files")
+            self._overall_bar.setRange(0, event.total * scale)
+            self._overall_bar.setValue(event.index * scale)
+            self._overall_bar.setFormat(f"{event.index} of {event.total} files")
             self._file_bar.setValue(100)
             verb = {"done": "Finished", "skip": "Skipped", "fail": "Failed"}[event.stage]
             self._status_label.setText(f"{verb} {name}")
         elif event.stage == "summary":
-            self._overall_bar.setRange(0, event.total)
-            self._overall_bar.setValue(event.total)
+            self._overall_bar.setRange(0, event.total * scale)
+            self._overall_bar.setValue(event.total * scale)
             self._file_bar.setValue(0)
             self._file_bar.setFormat("")
             self._final_event = event
@@ -478,6 +488,9 @@ class MainWindow(QMainWindow):
 
     def _on_file_progress(self, fraction: float) -> None:
         self._file_bar.setValue(round(fraction * 100))
+        if self._current_total:
+            combined = (self._current_video_index - 1) + fraction
+            self._overall_bar.setValue(round(combined * _OVERALL_PROGRESS_SCALE))
 
     def _cancel_run(self) -> None:
         if self._worker:
@@ -493,6 +506,8 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setEnabled(True)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
         self._final_event = None
+        self._current_video_index = 0
+        self._current_total = 0
         self._overall_bar.setRange(0, 1)
         self._overall_bar.setValue(0)
         self._overall_bar.setFormat("Starting…")
