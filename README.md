@@ -9,8 +9,8 @@ It crawls a directory recursively, transcribes every video it finds using [whisp
 
 ## Screenshots
 
-<img src="assets/screenshots/gui-idle.png" width="480" alt="GUI – idle state">
-<img src="assets/screenshots/gui-running.png" width="480" alt="GUI – transcription in progress">
+<img src="https://github.com/simnim/add_subs_to_videos/blob/main/assets/screenshots/gui-idle.png?raw=true" width="480" alt="GUI – idle state">
+<img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="480" alt="GUI – transcription in progress">
 
 ## Install
 
@@ -56,7 +56,7 @@ add_subs_to_videos /path/to/videos --force   # re-transcribe even if .srt exists
 
 Launch "Add Subs to Videos" from your applications menu, or run `add-subs-to-videos-gui` from a terminal. Drag a folder of videos in, pick a model and language, and watch progress live.
 
-<img src="assets/screenshots/gui-ready.png" width="480" alt="GUI – folder selected, ready to run">
+<img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-ready.png?raw=true" width="480" alt="GUI – folder selected, ready to run">
 
 ## Models
 
