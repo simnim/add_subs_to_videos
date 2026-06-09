@@ -6,19 +6,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# Read version from pyproject.toml
-VERSION=$(python3 - <<'EOF'
-import sys, pathlib
-if sys.version_info >= (3, 11):
-    import tomllib
-    data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-else:
-    import re
-    text = pathlib.Path("pyproject.toml").read_text()
-    data = {"project": {"version": re.search(r'version\s*=\s*"([^"]+)"', text).group(1)}}
-print(data["project"]["version"])
-EOF
-)
+VERSION=$(cat VERSION)
 echo "Building version: $VERSION"
 export APP_VERSION="$VERSION"
 

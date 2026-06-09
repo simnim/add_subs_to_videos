@@ -1,6 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "VERSION"
+pattern = "^(?P<version>.+)$"
+
 [project]
 name = "add_subs_to_videos"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Add missing subtitles. Recursive video-to-SRT transcription using whisper.cpp"
 readme = "README.md"
 requires-python = ">=3.12"

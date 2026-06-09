@@ -72,5 +72,4 @@ parts:
       - libfreetype6
     override-pull: |
       craftctl default
-      VER=$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-      craftctl set version="$VER"
+      craftctl set version="$(cat VERSION)"

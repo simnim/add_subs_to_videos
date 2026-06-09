@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Add Subs to Videos
+Comment=Generate .srt subtitles for your videos using whisper.cpp
+Exec=add-subs-to-videos-gui
+Icon=${SNAP}/meta/gui/icon.svg
+Terminal=false
+Categories=AudioVideo;Video;Utility;

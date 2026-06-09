@@ -1,3 +1,7 @@
 from __future__ import annotations
+from importlib.metadata import version, PackageNotFoundError
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("add_subs_to_videos")
+except PackageNotFoundError:
+    __version__ = "unknown"
