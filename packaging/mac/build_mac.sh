@@ -51,11 +51,12 @@ fi
 echo "App bundle built: $APP_PATH"
 echo "CLI binary built: $CLI_PATH"
 
-# Stage the CLI binary + installer helper for the DMG
+# Stage everything for the DMG into one directory
 DMG_STAGING="build/dmg_staging"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
-cp -R "$CLI_PATH" "$DMG_STAGING/add_subs_to_videos"
+cp -R "$APP_PATH" "$DMG_STAGING/Add Subs to Videos.app"
+cp "$CLI_PATH" "$DMG_STAGING/add_subs_to_videos"
 cp "packaging/mac/Install CLI.command" "$DMG_STAGING/Install CLI.command"
 chmod +x "$DMG_STAGING/add_subs_to_videos" "$DMG_STAGING/Install CLI.command"
 
@@ -74,9 +75,7 @@ create-dmg \
     --icon "Install CLI.command" 400 300 \
     --icon "add_subs_to_videos" 600 300 \
     "$DMG_NAME" \
-    "$APP_PATH" \
-    "$DMG_STAGING/Install CLI.command" \
-    "$DMG_STAGING/add_subs_to_videos"
+    "$DMG_STAGING"
 
 echo ""
 echo "Done: $DMG_NAME"
