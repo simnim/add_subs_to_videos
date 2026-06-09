@@ -6,6 +6,7 @@ You have video files but no subtitles. This tool fixes that.
 
 It crawls a directory recursively, transcribes every video it finds using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and writes a `.srt` sidecar file next to each one. Already-transcribed files are skipped, so re-running is fast and safe.
 
+
 ## Screenshots
 
 <img src="assets/screenshots/gui-idle.png" width="480" alt="GUI – idle state">
