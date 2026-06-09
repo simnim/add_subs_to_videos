@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build artifacts
+build/
+dist/
+
+# Virtual environments
+.venv/
+
+# Test cache
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Project-specific: personal video/test data and generated subtitle output
+videos/
