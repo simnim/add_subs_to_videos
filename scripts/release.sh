@@ -20,6 +20,7 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
 fi
 
 echo "Releasing $TAG"
+git push
 git tag -a "$TAG" -m "Release $TAG"
 git push origin "$TAG"
 gh release create "$TAG" --title "$TAG" --generate-notes
