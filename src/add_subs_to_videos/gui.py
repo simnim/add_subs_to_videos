@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._tree_label)
 
         table_font = QFont("monospace")
-        table_font.setPointSize(9)
+        table_font.setPointSize(11)
 
         self._scan_message = QLabel()
         self._scan_message.setFont(table_font)
@@ -456,11 +456,15 @@ class MainWindow(QMainWindow):
             "  gridline-color: palette(mid);"
             "  background: palette(base);"
             "}"
+            "QTableWidget::item {"
+            "  padding: 4px 6px;"
+            "}"
             "QHeaderView::section {"
             "  background: palette(window);"
             "  border: none;"
             "  border-bottom: 1px solid palette(mid);"
-            "  padding: 2px 6px;"
+            "  padding: 4px 6px;"
+            "  font-weight: bold;"
             "}"
         )
         table_height = (
