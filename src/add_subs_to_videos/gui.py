@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._scan_message)
 
         self._file_table = QTableWidget(0, 3)
-        self._file_table.setHorizontalHeaderLabels(["Location", "File", "Status"])
+        self._file_table.setHorizontalHeaderLabels(["Subdir", "File", "Status"])
         self._file_table.setFont(table_font)
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -619,7 +619,8 @@ class MainWindow(QMainWindow):
             self._scan_message.setVisible(False)
             self._file_table.setRowCount(len(files))
             self._file_row_by_path = {}
-            for row, path in enumerate(files):
+            locations = []
+            for path in files:
                 location = ""
                 if self._folder is not None and self._folder.is_dir():
                     try:
@@ -627,10 +628,13 @@ class MainWindow(QMainWindow):
                         location = "" if rel_parent == Path(".") else str(rel_parent)
                     except ValueError:
                         pass
+                locations.append(location)
+            for row, (path, location) in enumerate(zip(files, locations)):
                 self._file_table.setItem(row, 0, QTableWidgetItem(location))
                 self._file_table.setItem(row, 1, QTableWidgetItem(path.name))
                 self._file_table.setItem(row, 2, QTableWidgetItem("Pending"))
                 self._file_row_by_path[path] = row
+            self._file_table.setColumnHidden(0, not any(locations))
             self._file_table.setVisible(True)
         except RuntimeError:
             pass  # widget was destroyed (e.g. window closed) before the scan finished
