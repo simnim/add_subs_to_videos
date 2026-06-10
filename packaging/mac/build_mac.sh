@@ -26,13 +26,13 @@ iconutil -c icns "$ICONSET" -o assets/icon.icns
 echo "Icon created: assets/icon.icns"
 
 # Install PyInstaller if not already present
-if ! uv run pyinstaller --version &>/dev/null 2>&1; then
+if ! uv run --extra gui pyinstaller --version &>/dev/null 2>&1; then
     uv add --dev pyinstaller
 fi
 
 # Build .app bundle
 echo "Building .app bundle..."
-uv run pyinstaller \
+uv run --extra gui pyinstaller \
     packaging/mac/add_subs_to_videos.spec \
     --distpath dist \
     --workpath build/pyinstaller \
