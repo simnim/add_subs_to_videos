@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from add_subs_to_videos.cli import build_parser
-from add_subs_to_videos.files import VIDEO_EXTENSIONS, find_videos
+from add_subs_to_videos.files import VIDEO_EXTENSIONS, build_video_tree, find_videos, format_size_mb
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
 from add_subs_to_videos.transcribe import (
     _Cancelled,
@@ -302,6 +302,92 @@ class TestFindVideos:
             (tmp_path / f"file{ext}").touch()
         videos = find_videos(tmp_path)
         assert len(videos) == len(VIDEO_EXTENSIONS)
+
+
+# ---------------------------------------------------------------------------
+# format_size_mb
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSizeMb:
+    def test_zero_bytes(self):
+        assert format_size_mb(0) == "0.0M"
+
+    def test_under_ten_mb_uses_one_decimal(self):
+        assert format_size_mb(int(5.4 * 1024 * 1024)) == "5.4M"
+
+    def test_at_ten_mb_uses_no_decimal(self):
+        assert format_size_mb(10 * 1024 * 1024) == "10M"
+
+    def test_just_under_ten_mb_uses_one_decimal(self):
+        assert format_size_mb(10 * 1024 * 1024 - 1) == "10.0M"
+
+    def test_large_value(self):
+        assert format_size_mb(19 * 1024 * 1024) == "19M"
+
+
+# ---------------------------------------------------------------------------
+# build_video_tree
+# ---------------------------------------------------------------------------
+
+
+class TestBuildVideoTree:
+    def test_single_video_file(self, tmp_path):
+        f = tmp_path / "clip.mp4"
+        f.write_bytes(b"x" * (2 * 1024 * 1024))
+        assert build_video_tree(f) == f"[{format_size_mb(f.stat().st_size):>4}]  clip.mp4"
+
+    def test_empty_directory_returns_empty_string(self, tmp_path):
+        assert build_video_tree(tmp_path) == ""
+
+    def test_directory_with_only_non_video_files_returns_empty_string(self, tmp_path):
+        (tmp_path / "readme.txt").touch()
+        assert build_video_tree(tmp_path) == ""
+
+    def test_flat_directory(self, tmp_path):
+        (tmp_path / "a.mp4").write_bytes(b"x" * 1024 * 1024)
+        (tmp_path / "b.mkv").write_bytes(b"x" * 1024 * 1024)
+        (tmp_path / "notes.txt").touch()
+        tree = build_video_tree(tmp_path)
+        lines = tree.splitlines()
+        assert len(lines) == 3
+        assert lines[0] == f"[{format_size_mb(2 * 1024 * 1024):>4}]  {tmp_path.name}/"
+        assert lines[1].startswith("├── ") and "a.mp4" in lines[1]
+        assert lines[2].startswith("└── ") and "b.mkv" in lines[2]
+        assert "notes.txt" not in tree
+
+    def test_nested_directory_sums_and_prefixes(self, tmp_path):
+        (tmp_path / "a.mp4").write_bytes(b"x" * 1024 * 1024)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.mp4").write_bytes(b"x" * 2 * 1024 * 1024)
+        tree = build_video_tree(tmp_path)
+        lines = tree.splitlines()
+        assert lines[0] == f"[{format_size_mb(3 * 1024 * 1024):>4}]  {tmp_path.name}/"
+        assert lines[1].startswith("├── ") and "a.mp4" in lines[1]
+        assert lines[2].startswith("└── ") and "sub/" in lines[2]
+        assert f"[{format_size_mb(2 * 1024 * 1024):>4}]" in lines[2]
+        assert lines[3] == f"    └── [{format_size_mb(2 * 1024 * 1024):>4}]  b.mp4"
+
+    def test_video_free_subdirectory_is_pruned(self, tmp_path):
+        (tmp_path / "a.mp4").touch()
+        empty_sub = tmp_path / "empty"
+        empty_sub.mkdir()
+        (empty_sub / "notes.txt").touch()
+        tree = build_video_tree(tmp_path)
+        assert "empty" not in tree
+
+    def test_ordering_interleaves_dirs_and_files(self, tmp_path):
+        (tmp_path / "z.mp4").touch()
+        sub = tmp_path / "m"
+        sub.mkdir()
+        (sub / "n.mp4").touch()
+        (tmp_path / "a.mp4").touch()
+        tree = build_video_tree(tmp_path)
+        lines = tree.splitlines()
+        top_level = [line for line in lines[1:] if line.startswith(("├── ", "└── "))]
+        names = [line.split("  ", 1)[1] for line in top_level]
+        assert names == ["a.mp4", "m/", "z.mp4"]
 
 
 # ---------------------------------------------------------------------------

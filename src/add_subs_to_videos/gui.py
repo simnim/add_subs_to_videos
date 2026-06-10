@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .config import load_config, save_config
-from .files import VIDEO_EXTENSIONS
+from .files import VIDEO_EXTENSIONS, build_video_tree
 from .runtime_paths import ensure_bundled_ffmpeg_on_path
 from .transcribe import process_directory
 
@@ -116,6 +116,8 @@ class DropZone(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(self._STYLE)
         self._folder_path: Path | None = None
+        self._tree_threads: list[_TreeScanThread] = []
+        self._tree_scan_token = 0
 
         layout = QGridLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -123,6 +125,7 @@ class DropZone(QFrame):
         layout.setVerticalSpacing(2)
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(2, 2)
 
         self._icon_label = QLabel("\U0001F5B1️ ➡️ \U0001F449")
         icon_font = QFont()
@@ -181,6 +184,17 @@ class DropZone(QFrame):
         subtitle_layout.addWidget(self._path_label)
         layout.addWidget(subtitle_box, 1, 1)
 
+        self._tree_view = QPlainTextEdit()
+        self._tree_view.setReadOnly(True)
+        tree_font = QFont("monospace")
+        tree_font.setPointSize(9)
+        self._tree_view.setFont(tree_font)
+        self._tree_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._tree_view.setMinimumHeight(80)
+        self._tree_view.setMaximumHeight(120)
+        self._tree_view.setVisible(False)
+        layout.addWidget(self._tree_view, 0, 2, 2, 1)
+
         self.set_folder(None)
 
     def _update_selection_path_label(self, text: str) -> None:
@@ -193,6 +207,8 @@ class DropZone(QFrame):
 
     def set_folder(self, path: Path | None) -> None:
         self._folder_path = path
+        self._tree_scan_token += 1
+        token = self._tree_scan_token
         if path is None:
             self.setStyleSheet(self._STYLE)
             self.setToolTip("")
@@ -202,6 +218,8 @@ class DropZone(QFrame):
             self._selection_path_label.setText("")
             self._name_label.setVisible(True)
             self._path_label.setVisible(True)
+            self._tree_view.setVisible(False)
+            self._tree_view.setPlainText("")
         else:
             self.setStyleSheet(self._SELECTED_STYLE)
             if path.is_dir():
@@ -215,6 +233,22 @@ class DropZone(QFrame):
             self._name_label.setVisible(False)
             self._path_label.setVisible(False)
             self.setToolTip(str(path))
+
+            self._tree_view.setVisible(True)
+            self._tree_view.setPlainText("Scanning…")
+            thread = _TreeScanThread(path)
+            thread.tree_ready.connect(lambda text, t=token: self._on_tree_ready(t, text))
+            self._tree_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._tree_threads.remove(t))
+            thread.start()
+
+    def _on_tree_ready(self, token: int, text: str) -> None:
+        if token != self._tree_scan_token:
+            return
+        try:
+            self._tree_view.setPlainText(text)
+        except RuntimeError:
+            pass  # widget was destroyed (e.g. window closed) before the scan finished
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -247,6 +281,18 @@ class DropZone(QFrame):
             path = Path(folder)
             self.set_folder(path)
             self.folder_dropped.emit(path)
+
+
+class _TreeScanThread(QThread):
+    tree_ready = Signal(str)
+
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        self._root = root
+
+    def run(self) -> None:
+        text = build_video_tree(self._root)
+        self.tree_ready.emit(text if text else "(no video files found)")
 
 
 class _WorkerThread(QThread):

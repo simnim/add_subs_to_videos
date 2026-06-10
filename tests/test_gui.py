@@ -14,6 +14,7 @@ from add_subs_to_videos.gui import (
     MainWindow,
     _dev_icon_path,
     _OVERALL_PROGRESS_SCALE,
+    _TreeScanThread,
     _WorkerThread,
 )
 from add_subs_to_videos.transcribe import ProgressEvent
@@ -143,6 +144,78 @@ class TestDropZone:
         with patch.object(QFileDialog, "getExistingDirectory", return_value=""):
             dz.mousePressEvent(MagicMock())
         assert received == []
+
+    def test_tree_view_hidden_and_empty_initially(self, dz):
+        assert dz._tree_view.isHidden()
+        assert dz._tree_view.toPlainText() == ""
+
+    def test_set_folder_shows_scanning_placeholder(self, dz, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        dz.set_folder(tmp_path)
+        assert not dz._tree_view.isHidden()
+        assert dz._tree_view.toPlainText() == "Scanning…"
+
+    def test_tree_ready_updates_view(self, dz, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        dz.set_folder(tmp_path)
+        token = dz._tree_scan_token
+        dz._on_tree_ready(token, "fake tree text")
+        assert dz._tree_view.toPlainText() == "fake tree text"
+
+    def test_stale_tree_result_ignored(self, dz, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        dz.set_folder(tmp_path)
+        stale_token = dz._tree_scan_token
+        dz.set_folder(tmp_path)
+        dz._on_tree_ready(stale_token, "stale")
+        assert dz._tree_view.toPlainText() == "Scanning…"
+
+    def test_set_folder_none_clears_and_hides_tree_view(self, dz, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        dz.set_folder(tmp_path)
+        dz.set_folder(None)
+        assert dz._tree_view.isHidden()
+        assert dz._tree_view.toPlainText() == ""
+
+    def test_set_folder_populates_tree_view_end_to_end(self, dz, tmp_video_dir, qtbot):
+        dz.set_folder(tmp_video_dir)
+        qtbot.waitUntil(lambda: dz._tree_view.toPlainText() != "Scanning…", timeout=5000)
+        text = dz._tree_view.toPlainText()
+        assert "movie.mp4" in text
+        assert "M]" in text
+
+
+# ---------------------------------------------------------------------------
+# _TreeScanThread  (run() called directly — synchronous)
+# ---------------------------------------------------------------------------
+
+
+class TestTreeScanThread:
+    def test_emits_tree_text_for_directory(self, tmp_video_dir, qapp):
+        thread = _TreeScanThread(tmp_video_dir)
+        received = []
+        thread.tree_ready.connect(received.append)
+        thread.run()
+        assert len(received) == 1
+        assert "movie.mp4" in received[0]
+
+    def test_emits_one_line_for_single_file(self, tmp_path, qapp):
+        f = tmp_path / "clip.mp4"
+        f.touch()
+        thread = _TreeScanThread(f)
+        received = []
+        thread.tree_ready.connect(received.append)
+        thread.run()
+        assert len(received) == 1
+        assert "clip.mp4" in received[0]
+        assert "\n" not in received[0]
+
+    def test_emits_placeholder_when_no_videos(self, tmp_path, qapp):
+        thread = _TreeScanThread(tmp_path)
+        received = []
+        thread.tree_ready.connect(received.append)
+        thread.run()
+        assert received == ["(no video files found)"]
 
 
 # ---------------------------------------------------------------------------
