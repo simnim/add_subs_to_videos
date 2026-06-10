@@ -33,6 +33,10 @@ from .transcribe import process_directory
 # completed videos with the current video's fractional progress.
 _OVERALL_PROGRESS_SCALE = 1000
 
+# palette(placeholder-text) is too light to read against the light color
+# scheme forced in main(), so secondary/hint labels use this darker grey.
+_MUTED_TEXT_STYLE = "color: #444444;"
+
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
 _LANGUAGES: list[tuple[str, str]] = [
@@ -137,7 +141,7 @@ class DropZone(QFrame):
         selection_path_font = QFont()
         selection_path_font.setPointSize(11)
         self._selection_path_label.setFont(selection_path_font)
-        self._selection_path_label.setStyleSheet("color: palette(placeholder-text);")
+        self._selection_path_label.setStyleSheet(_MUTED_TEXT_STYLE)
         self._selection_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._selection_path_label.setVisible(False)
         layout.addWidget(self._selection_path_label)
@@ -154,7 +158,7 @@ class DropZone(QFrame):
         path_font = QFont()
         path_font.setPointSize(11)
         self._path_label.setFont(path_font)
-        self._path_label.setStyleSheet("color: palette(placeholder-text);")
+        self._path_label.setStyleSheet(_MUTED_TEXT_STYLE)
         self._path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._path_label)
 
@@ -303,7 +307,7 @@ class MainWindow(QMainWindow):
         "  background: palette(button);"
         "  border: 1px solid palette(mid);"
         "  border-radius: 6px;"
-        "  color: palette(placeholder-text);"
+        f"  {_MUTED_TEXT_STYLE}"
         "}"
     )
     _CANCEL_BTN_STYLE_IDLE = (
@@ -342,7 +346,7 @@ class MainWindow(QMainWindow):
 
         hint_row = QHBoxLayout()
         self._change_hint = QLabel("Drop a new folder or video file above, or click to change")
-        self._change_hint.setStyleSheet("color: palette(placeholder-text);")
+        self._change_hint.setStyleSheet(_MUTED_TEXT_STYLE)
         self._change_hint.setVisible(False)
         hint_row.addWidget(self._change_hint, 1)
 
@@ -394,7 +398,7 @@ class MainWindow(QMainWindow):
         self._status_label.setStyleSheet("color: palette(window-text);")
         status_row.addWidget(self._status_label, 1)
         self._counts_label = QLabel("")
-        self._counts_label.setStyleSheet("color: palette(placeholder-text);")
+        self._counts_label.setStyleSheet(_MUTED_TEXT_STYLE)
         status_row.addWidget(self._counts_label)
         layout.addLayout(status_row)
 
