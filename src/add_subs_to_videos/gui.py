@@ -88,6 +88,18 @@ class DropZone(QFrame):
         "}"
     )
 
+    _SELECTED_STYLE = (
+        "DropZone {"
+        "  border: 2px solid #2E8B57;"
+        "  border-radius: 12px;"
+        "  background: #E8F4FD;"
+        "}"
+        "DropZone:hover {"
+        "  background: #D6EAFB;"
+        "  border: 2px solid #2E8B57;"
+        "}"
+    )
+
     _EMPTY_NAME = "Drop a folder or video file here"
     _EMPTY_HINT = "or click to browse"
 
@@ -158,15 +170,20 @@ class DropZone(QFrame):
     def set_folder(self, path: Path | None) -> None:
         self._folder_path = path
         if path is None:
+            self.setStyleSheet(self._STYLE)
             self.setToolTip("")
             self._selection_name_label.setVisible(False)
             self._selection_name_label.setText("")
             self._selection_path_label.setVisible(False)
             self._selection_path_label.setText("")
         else:
-            icon = "\U0001F4C1" if path.is_dir() else "\U0001F3AC"
+            self.setStyleSheet(self._SELECTED_STYLE)
+            if path.is_dir():
+                icon, label = "\U0001F4C1", "Current folder"
+            else:
+                icon, label = "\U0001F3AC", "Current video"
             self._selection_name_label.setVisible(True)
-            self._selection_name_label.setText(f"{icon} {path.name or str(path)}")
+            self._selection_name_label.setText(f"{label}: {icon} {path.name or str(path)}")
             self._selection_path_label.setVisible(True)
             self._update_selection_path_label(str(path))
             self.setToolTip(str(path))
