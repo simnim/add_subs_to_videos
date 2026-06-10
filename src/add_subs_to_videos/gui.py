@@ -211,9 +211,17 @@ class DropZone(QFrame):
     def _update_selection_path_label(self, text: str) -> None:
         metrics = QFontMetrics(self._selection_path_label.font())
         available = self.width() - self._icon_label.sizeHint().width() - 48
-        elided = metrics.elidedText(
-            text, Qt.TextElideMode.ElideMiddle, available if available > 0 else 320
-        )
+        width = available if available > 0 else 320
+        name = Path(text).name
+        if name and len(name) < len(text):
+            prefix = text[: -len(name)]
+            prefix_width = max(width - metrics.horizontalAdvance(name), 0)
+            elided_prefix = metrics.elidedText(
+                prefix, Qt.TextElideMode.ElideMiddle, prefix_width
+            )
+            elided = elided_prefix + name
+        else:
+            elided = metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, width)
         self._selection_path_label.setText(elided)
 
     def set_folder(self, path: Path | None) -> None:
@@ -438,8 +446,8 @@ class MainWindow(QMainWindow):
         self._scan_message.setVisible(False)
         layout.addWidget(self._scan_message)
 
-        self._file_table = QTableWidget(0, 3)
-        self._file_table.setHorizontalHeaderLabels(["Subdir", "File", "Status"])
+        self._file_table = QTableWidget(0, 2)
+        self._file_table.setHorizontalHeaderLabels(["File", "Status"])
         self._file_table.setFont(table_font)
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -447,9 +455,8 @@ class MainWindow(QMainWindow):
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
         header = self._file_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._file_table.setStyleSheet(
             "QTableWidget {"
             "  border: 1px solid palette(mid);"
@@ -623,22 +630,16 @@ class MainWindow(QMainWindow):
             self._scan_message.setVisible(False)
             self._file_table.setRowCount(len(files))
             self._file_row_by_path = {}
-            locations = []
-            for path in files:
-                location = ""
+            for row, path in enumerate(files):
+                display = path.name
                 if self._folder is not None and self._folder.is_dir():
                     try:
-                        rel_parent = path.relative_to(self._folder).parent
-                        location = "" if rel_parent == Path(".") else str(rel_parent)
+                        display = str(path.relative_to(self._folder))
                     except ValueError:
                         pass
-                locations.append(location)
-            for row, (path, location) in enumerate(zip(files, locations)):
-                self._file_table.setItem(row, 0, QTableWidgetItem(location))
-                self._file_table.setItem(row, 1, QTableWidgetItem(path.name))
-                self._file_table.setItem(row, 2, QTableWidgetItem("Pending"))
+                self._file_table.setItem(row, 0, QTableWidgetItem(display))
+                self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
                 self._file_row_by_path[path] = row
-            self._file_table.setColumnHidden(0, not any(locations))
             self._file_table.setVisible(True)
         except RuntimeError:
             pass  # widget was destroyed (e.g. window closed) before the scan finished
@@ -664,16 +665,16 @@ class MainWindow(QMainWindow):
         row = self._file_row_by_path.get(video)
         if row is None:
             return
-        item = self._file_table.item(row, 2)
+        item = self._file_table.item(row, 1)
         if item is None:
             return
         if status == "Done":
             item.setIcon(self._done_icon)
-            item.setText("")
+            item.setText("Done")
             item.setToolTip("Done")
         elif status == "Skipped":
             item.setIcon(self._skipped_icon)
-            item.setText("")
+            item.setText("Skipped")
             item.setToolTip("Skipped")
         else:
             item.setIcon(QIcon())
