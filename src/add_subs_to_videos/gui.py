@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -116,58 +117,77 @@ class DropZone(QFrame):
         self.setStyleSheet(self._STYLE)
         self._folder_path: Path | None = None
 
-        layout = QVBoxLayout(self)
+        layout = QGridLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setHorizontalSpacing(16)
+        layout.setVerticalSpacing(2)
+        layout.setColumnStretch(0, 0)
+        layout.setColumnStretch(1, 1)
 
         self._icon_label = QLabel("\U0001F5B1️ ➡️ \U0001F449")
         icon_font = QFont()
         icon_font.setPointSize(28)
         self._icon_label.setFont(icon_font)
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._icon_label)
+        layout.addWidget(self._icon_label, 0, 0, 2, 1, Qt.AlignmentFlag.AlignCenter)
 
         self._selection_name_label = QLabel()
         selection_name_font = QFont()
         selection_name_font.setPointSize(18)
         selection_name_font.setBold(True)
         self._selection_name_label.setFont(selection_name_font)
-        self._selection_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._selection_name_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self._selection_name_label.setVisible(False)
-        layout.addWidget(self._selection_name_label)
-
-        self._selection_path_label = QLabel()
-        selection_path_font = QFont()
-        selection_path_font.setPointSize(11)
-        self._selection_path_label.setFont(selection_path_font)
-        self._selection_path_label.setStyleSheet(_MUTED_TEXT_STYLE)
-        self._selection_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._selection_path_label.setVisible(False)
-        layout.addWidget(self._selection_path_label)
 
         self._name_label = QLabel(self._EMPTY_NAME)
         name_font = QFont()
         name_font.setPointSize(14)
         name_font.setBold(True)
         self._name_label.setFont(name_font)
-        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._name_label)
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        title_box = QWidget()
+        title_layout = QVBoxLayout(title_box)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(0)
+        title_layout.addWidget(self._selection_name_label)
+        title_layout.addWidget(self._name_label)
+        layout.addWidget(title_box, 0, 1)
+
+        self._selection_path_label = QLabel()
+        selection_path_font = QFont()
+        selection_path_font.setPointSize(11)
+        self._selection_path_label.setFont(selection_path_font)
+        self._selection_path_label.setStyleSheet(_MUTED_TEXT_STYLE)
+        self._selection_path_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._selection_path_label.setVisible(False)
 
         self._path_label = QLabel(self._EMPTY_HINT)
         path_font = QFont()
         path_font.setPointSize(11)
         self._path_label.setFont(path_font)
         self._path_label.setStyleSheet(_MUTED_TEXT_STYLE)
-        self._path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._path_label)
+        self._path_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        subtitle_box = QWidget()
+        subtitle_layout = QVBoxLayout(subtitle_box)
+        subtitle_layout.setContentsMargins(0, 0, 0, 0)
+        subtitle_layout.setSpacing(0)
+        subtitle_layout.addWidget(self._selection_path_label)
+        subtitle_layout.addWidget(self._path_label)
+        layout.addWidget(subtitle_box, 1, 1)
 
         self.set_folder(None)
 
     def _update_selection_path_label(self, text: str) -> None:
         metrics = QFontMetrics(self._selection_path_label.font())
+        available = self.width() - self._icon_label.sizeHint().width() - 48
         elided = metrics.elidedText(
-            text, Qt.TextElideMode.ElideMiddle, self.width() - 32 or 320
+            text, Qt.TextElideMode.ElideMiddle, available if available > 0 else 320
         )
         self._selection_path_label.setText(elided)
 
