@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from .config import load_config, save_config
 from .files import VIDEO_EXTENSIONS
+from .runtime_paths import ensure_bundled_ffmpeg_on_path
 from .transcribe import process_directory
 
 # QProgressBar values are integers, so the overall bar's range is scaled up by
@@ -563,6 +564,7 @@ def _dev_icon_path() -> Path | None:
 
 
 def main() -> None:
+    ensure_bundled_ffmpeg_on_path()
     app = QApplication(sys.argv)
     app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     icon_path = _dev_icon_path()

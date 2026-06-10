@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .config import load_config
+from .runtime_paths import ensure_bundled_ffmpeg_on_path
 from .transcribe import process_directory
 
 
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    ensure_bundled_ffmpeg_on_path()
     parser = build_parser()
     cfg = load_config()
     if cfg:

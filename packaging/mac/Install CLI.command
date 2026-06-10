@@ -3,7 +3,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="$DIR/add_subs_to_videos"
+SRC="$DIR/add_subs_to_videos/add_subs_to_videos"
 DEST="/usr/local/bin/add_subs_to_videos"
 
 if [ ! -x "$SRC" ]; then

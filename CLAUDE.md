@@ -56,8 +56,13 @@ Releases are triggered by creating a GitHub Release. Two workflows fire automati
 
 - **`.github/workflows/publish.yml`** — builds a wheel with `uv build` and uploads to PyPI using the `PYPI_TOKEN` secret (or OIDC trusted publishing with `--trusted-publishing always`)
 - **`.github/workflows/snap.yml`** — builds the snap with `snapcore/action-build` and publishes to the Snap Store using the `SNAPCRAFT_STORE_CREDENTIALS` secret
+- **`.github/workflows/mac-release.yml`** — builds the macOS `.dmg` via `packaging/mac/build_mac.sh` and uploads it to the GitHub release
 
 Snap packaging lives in `snap/snapcraft.yaml`. The `python` plugin compiles `pywhispercpp` (C++ extension) during the snap build and bundles `ffmpeg` via `stage-packages`, so the snap is fully self-contained.
+
+### macOS .dmg
+
+`packaging/mac/build_mac.sh` builds both the GUI `.app` and a CLI bundle with PyInstaller (`packaging/mac/add_subs_to_videos.spec`), then runs `packaging/mac/bundle_ffmpeg.sh` against each. That script copies Homebrew's `ffmpeg`/`ffprobe` plus their dylib dependencies (resolved via `dylibbundler`) into an `ffmpeg-bin/` folder next to each bundle's executable, so the `.dmg` is fully self-contained — no `brew install ffmpeg` needed by end users. At startup, `runtime_paths.ensure_bundled_ffmpeg_on_path()` (called from both `cli.py:main()` and `gui.py:main()`) detects when running from a PyInstaller bundle and prepends that `ffmpeg-bin/` directory to `PATH`, which is how both `_probe_duration()`'s `ffprobe` call and `pywhispercpp`'s internal `ffmpeg` call (used to decode non-WAV media) find the binaries. Building requires `brew install ffmpeg cmake librsvg create-dmg dylibbundler`.
 
 One-time setup before first release:
 ```bash

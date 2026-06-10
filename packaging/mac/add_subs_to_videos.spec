@@ -65,7 +65,10 @@ app = BUNDLE(
     },
 )
 
-# Standalone CLI binary, shipped alongside the .app (not nested inside the bundle)
+# Standalone CLI bundle, shipped alongside the .app (not nested inside it).
+# Built as a onedir bundle (rather than onefile) so the bundled ffmpeg/ffprobe
+# binaries (added by packaging/mac/bundle_ffmpeg.sh) can sit next to the
+# executable with stable, relocatable @executable_path-relative dylib paths.
 cli_a = Analysis(
     [os.path.join(SPECPATH, 'cli_launcher.py')],
     pathex=[SRC_PATH],
@@ -82,10 +85,8 @@ cli_pyz = PYZ(cli_a.pure)
 cli_exe = EXE(
     cli_pyz,
     cli_a.scripts,
-    cli_a.binaries,
-    cli_a.zipfiles,
-    cli_a.datas,
     [],
+    exclude_binaries=True,
     name='add_subs_to_videos',
     debug=False,
     bootloader_ignore_signals=False,
@@ -96,4 +97,14 @@ cli_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+cli_coll = COLLECT(
+    cli_exe,
+    cli_a.binaries,
+    cli_a.zipfiles,
+    cli_a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='add_subs_to_videos',
 )

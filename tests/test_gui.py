@@ -574,3 +574,22 @@ def test_dev_icon_path_finds_repo_asset():
 def test_dev_icon_path_returns_none_when_missing(mocker):
     mocker.patch("add_subs_to_videos.gui.Path.is_file", return_value=False)
     assert _dev_icon_path() is None
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def test_main_calls_ensure_bundled_ffmpeg_on_path(mocker):
+    from add_subs_to_videos import gui
+
+    ensure = mocker.patch("add_subs_to_videos.gui.ensure_bundled_ffmpeg_on_path")
+    mocker.patch("add_subs_to_videos.gui.QApplication")
+    mocker.patch("add_subs_to_videos.gui._dev_icon_path", return_value=None)
+    mocker.patch("add_subs_to_videos.gui.MainWindow")
+    mocker.patch("add_subs_to_videos.gui.sys.exit")
+
+    gui.main()
+
+    ensure.assert_called_once()

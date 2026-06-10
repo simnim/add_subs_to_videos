@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds Add Subs to Videos-<version>.dmg
-# Must be run on macOS. Requires: librsvg, create-dmg (brew install librsvg create-dmg)
+# Must be run on macOS. Requires: librsvg, create-dmg, ffmpeg, dylibbundler
+# (brew install librsvg create-dmg ffmpeg dylibbundler)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,26 +40,32 @@ uv run --extra gui pyinstaller \
     --noconfirm
 
 APP_PATH="dist/Add Subs to Videos.app"
-CLI_PATH="dist/add_subs_to_videos"
+CLI_DIR="dist/add_subs_to_videos"
 if [ ! -d "$APP_PATH" ]; then
     echo "Error: .app bundle not found at $APP_PATH"
     exit 1
 fi
-if [ ! -e "$CLI_PATH" ]; then
-    echo "Error: CLI binary not found at $CLI_PATH"
+if [ ! -d "$CLI_DIR" ]; then
+    echo "Error: CLI bundle not found at $CLI_DIR"
     exit 1
 fi
 echo "App bundle built: $APP_PATH"
-echo "CLI binary built: $CLI_PATH"
+echo "CLI bundle built: $CLI_DIR"
+
+# Bundle a self-contained ffmpeg/ffprobe (with their dylib deps) into both the
+# .app and the CLI bundle, so neither needs ffmpeg installed on the system.
+echo "Bundling ffmpeg..."
+bash packaging/mac/bundle_ffmpeg.sh "$APP_PATH/Contents/MacOS"
+bash packaging/mac/bundle_ffmpeg.sh "$CLI_DIR"
 
 # Stage everything for the DMG into one directory
 DMG_STAGING="build/dmg_staging"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_PATH" "$DMG_STAGING/Add Subs to Videos.app"
-cp "$CLI_PATH" "$DMG_STAGING/add_subs_to_videos"
+cp -R "$CLI_DIR" "$DMG_STAGING/add_subs_to_videos"
 cp "packaging/mac/Install CLI.command" "$DMG_STAGING/Install CLI.command"
-chmod +x "$DMG_STAGING/add_subs_to_videos" "$DMG_STAGING/Install CLI.command"
+chmod +x "$DMG_STAGING/Install CLI.command"
 
 # Build .dmg
 echo "Building .dmg..."

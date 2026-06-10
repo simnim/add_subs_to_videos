@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: Install system dependencies
-        run: brew install ffmpeg cmake librsvg create-dmg
+        run: brew install ffmpeg cmake librsvg create-dmg dylibbundler
 
       - name: Install Python dependencies
         run: uv sync --extra gui

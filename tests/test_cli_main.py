@@ -122,3 +122,11 @@ class TestMainFlags:
         mocker.patch("add_subs_to_videos.cli.load_config", return_value={"directory": "~"})
         main()
         assert mock_pd.call_args[0][0] == Path.home()
+
+
+class TestMainBundledFfmpeg:
+    def test_main_calls_ensure_bundled_ffmpeg_on_path(self, tmp_path, mocker, mock_pd, no_config):
+        ensure = mocker.patch("add_subs_to_videos.cli.ensure_bundled_ffmpeg_on_path")
+        mocker.patch("sys.argv", ["prog", str(tmp_path)])
+        main()
+        ensure.assert_called_once()

@@ -4,12 +4,14 @@
 
 You have video files but no subtitles. This tool fixes that.
 
-It crawls a directory recursively, transcribes every video it finds using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and writes a `.srt` sidecar file next to each one. Already-transcribed files are skipped, so re-running is fast and safe.
+It crawls a directory recursively, transcribes every video it finds using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and writes a `.srt` sidecar file next to each one. Already-transcribed files are skipped, so re-running is fast.
 
+## Repo
 
-## Screenshots
+https://github.com/simnim/add_subs_to_videos
 
-<img src="https://github.com/simnim/add_subs_to_videos/blob/main/assets/screenshots/gui-idle.png?raw=true" width="480" alt="GUI – idle state">
+# GUI screenshot
+
 <img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="480" alt="GUI – transcription in progress">
 
 ## Install
@@ -51,12 +53,6 @@ add_subs_to_videos /path/to/videos --force   # re-transcribe even if .srt exists
 ```
 
 `movie.mp4` → `movie.srt`, placed in the same directory. Supports `.mp4`, `.mkv`, `.avi`, `.mov`, `.m4v`, `.webm`, and more.
-
-### GUI
-
-Launch "Add Subs to Videos" from your applications menu, or run `add-subs-to-videos-gui` from a terminal. Drag a folder of videos in, pick a model and language, and watch progress live.
-
-<img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-ready.png?raw=true" width="480" alt="GUI – folder selected, ready to run">
 
 ## Models
 
