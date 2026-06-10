@@ -13,9 +13,8 @@ from add_subs_to_videos.gui import (
     DropZone,
     MainWindow,
     _dev_icon_path,
+    _FileScanThread,
     _OVERALL_PROGRESS_SCALE,
-    _TREE_VISIBLE_LINES,
-    _TreeScanThread,
     _WorkerThread,
 )
 from add_subs_to_videos.transcribe import ProgressEvent
@@ -148,36 +147,34 @@ class TestDropZone:
 
 
 # ---------------------------------------------------------------------------
-# _TreeScanThread  (run() called directly — synchronous)
+# _FileScanThread  (run() called directly — synchronous)
 # ---------------------------------------------------------------------------
 
 
-class TestTreeScanThread:
-    def test_emits_tree_text_for_directory(self, tmp_video_dir, qapp):
-        thread = _TreeScanThread(tmp_video_dir)
+class TestFileScanThread:
+    def test_emits_video_paths_for_directory(self, tmp_video_dir, qapp):
+        thread = _FileScanThread(tmp_video_dir)
         received = []
-        thread.tree_ready.connect(received.append)
+        thread.files_ready.connect(received.append)
         thread.run()
         assert len(received) == 1
-        assert "movie.mp4" in received[0]
+        assert received[0] == [tmp_video_dir / "movie.mp4", tmp_video_dir / "show.mkv", tmp_video_dir / "sub" / "episode.mp4"]
 
-    def test_emits_one_line_for_single_file(self, tmp_path, qapp):
+    def test_emits_single_path_for_single_file(self, tmp_path, qapp):
         f = tmp_path / "clip.mp4"
         f.touch()
-        thread = _TreeScanThread(f)
+        thread = _FileScanThread(f)
         received = []
-        thread.tree_ready.connect(received.append)
+        thread.files_ready.connect(received.append)
         thread.run()
-        assert len(received) == 1
-        assert "clip.mp4" in received[0]
-        assert "\n" not in received[0]
+        assert received == [[f]]
 
-    def test_emits_placeholder_when_no_videos(self, tmp_path, qapp):
-        thread = _TreeScanThread(tmp_path)
+    def test_emits_empty_list_when_no_videos(self, tmp_path, qapp):
+        thread = _FileScanThread(tmp_path)
         received = []
-        thread.tree_ready.connect(received.append)
+        thread.files_ready.connect(received.append)
         thread.run()
-        assert received == ["(no video files found)"]
+        assert received == [[]]
 
 
 # ---------------------------------------------------------------------------
@@ -594,76 +591,88 @@ class TestMainWindow:
         assert window._status_label.text() == "Cancelling…"
 
     # -----------------------------------------------------------------------
-    # "Files to process" tree section
+    # "Files to process" table section
     # -----------------------------------------------------------------------
 
-    def test_tree_view_hidden_and_empty_initially(self, window):
+    def test_file_table_hidden_and_empty_initially(self, window):
         assert window._tree_label.isHidden()
-        assert window._tree_view.isHidden()
-        assert window._tree_view.text() == ""
+        assert window._scan_message.isHidden()
+        assert window._file_table.isHidden()
+        assert window._file_table.rowCount() == 0
 
     def test_folder_set_shows_scanning_placeholder(self, window, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
         window._drop_zone.folder_dropped.emit(tmp_path)
         assert not window._tree_label.isHidden()
-        assert not window._tree_view.isHidden()
-        assert window._tree_view.text() == "Scanning…"
+        assert not window._scan_message.isHidden()
+        assert window._scan_message.text() == "Scanning…"
+        assert window._file_table.isHidden()
 
-    def test_tree_ready_updates_view(self, window, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+    def test_tree_ready_populates_table(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        files = [tmp_video_dir / "movie.mp4", tmp_video_dir / "sub" / "episode.mp4"]
+        window._on_tree_ready(token, files)
+
+        assert window._scan_message.isHidden()
+        assert not window._file_table.isHidden()
+        assert window._file_table.rowCount() == 2
+        assert window._file_table.item(0, 0).text() == "movie.mp4"
+        assert window._file_table.item(0, 1).text() == "Pending"
+        assert window._file_table.item(1, 0).text() == str(Path("sub") / "episode.mp4")
+        assert window._file_row_by_path == {files[0]: 0, files[1]: 1}
+
+    def test_tree_ready_with_no_files_shows_message(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
         window._drop_zone.folder_dropped.emit(tmp_path)
         token = window._tree_scan_token
-        window._on_tree_ready(token, "fake tree text")
-        assert window._tree_view.text() == "fake tree text"
+        window._on_tree_ready(token, [])
+        assert window._scan_message.text() == "(no video files found)"
+        assert not window._scan_message.isHidden()
+        assert window._file_table.isHidden()
 
-    def test_stale_tree_result_ignored(self, window, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        window._drop_zone.folder_dropped.emit(tmp_path)
+    def test_stale_tree_result_ignored(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
         stale_token = window._tree_scan_token
-        window._drop_zone.folder_dropped.emit(tmp_path)
-        window._on_tree_ready(stale_token, "stale")
-        assert window._tree_view.text() == "Scanning…"
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        window._on_tree_ready(stale_token, [tmp_video_dir / "movie.mp4"])
+        assert window._scan_message.text() == "Scanning…"
+        assert window._file_table.rowCount() == 0
 
-    def test_clear_selection_clears_and_hides_tree_view(self, window, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        window._drop_zone.folder_dropped.emit(tmp_path)
+    def test_clear_selection_clears_and_hides_table(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        window._on_tree_ready(token, [tmp_video_dir / "movie.mp4"])
         window._clear_btn.click()
         assert window._tree_label.isHidden()
-        assert window._tree_view.isHidden()
-        assert window._tree_view.text() == ""
+        assert window._scan_message.isHidden()
+        assert window._file_table.isHidden()
+        assert window._file_table.rowCount() == 0
+        assert window._file_row_by_path == {}
 
-    def test_folder_dropped_populates_tree_view_end_to_end(self, window, tmp_video_dir, qtbot):
+    def test_folder_dropped_populates_table_end_to_end(self, window, tmp_video_dir, qtbot):
         window._drop_zone.folder_dropped.emit(tmp_video_dir)
-        qtbot.waitUntil(lambda: window._tree_view.text() != "Scanning…", timeout=5000)
-        text = window._tree_view.text()
-        assert "M]" in text
+        qtbot.waitUntil(lambda: window._file_table.rowCount() > 0, timeout=5000)
+        names = [window._file_table.item(r, 0).text() for r in range(window._file_table.rowCount())]
+        assert "movie.mp4" in names
+        assert "show.mkv" in names
+        assert all(window._file_table.item(r, 1).text() == "Pending" for r in range(window._file_table.rowCount()))
 
-    def test_update_tree_display_elides_long_lines(self, window):
-        long_line = "├── [0.0M]  " + "x" * 500 + ".mp4"
-        window._tree_lines = [long_line]
-        window.resize(300, window.height())
-        window._update_tree_display()
-        text = window._tree_view.text()
-        assert text != long_line
-        assert text.startswith("├── [0.0M]  x")
-        assert "…" in text
+    def test_progress_event_updates_file_status(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        video = tmp_video_dir / "movie.mp4"
+        window._on_tree_ready(token, [video])
 
-    def test_update_tree_display_truncates_with_more_files_summary(self, window):
-        window._tree_lines = [f"line{i}" for i in range(_TREE_VISIBLE_LINES + 3)]
-        window._update_tree_display()
-        lines = window._tree_view.text().split("\n")
-        assert len(lines) == _TREE_VISIBLE_LINES
-        assert lines[:-1] == [f"line{i}" for i in range(_TREE_VISIBLE_LINES - 1)]
-        assert lines[-1] == "... and 4 more files"
+        window._on_progress(ProgressEvent(stage="start", index=1, total=1, video=video, done=0, skipped=0, failed=0))
+        assert window._file_table.item(0, 1).text() == "Processing"
 
-    def test_resize_re_elides_tree_view(self, window, mocker):
-        from PySide6.QtCore import QSize
-        from PySide6.QtGui import QResizeEvent
-
-        window._tree_lines = ["├── [0.0M]  " + "x" * 500 + ".mp4"]
-        spy = mocker.spy(window, "_update_tree_display")
-        window.resizeEvent(QResizeEvent(QSize(400, 600), QSize(560, 600)))
-        spy.assert_called()
+        window._on_progress(ProgressEvent(stage="done", index=1, total=1, video=video, done=1, skipped=0, failed=0))
+        assert window._file_table.item(0, 1).text() == "Done"
 
 
 # ---------------------------------------------------------------------------

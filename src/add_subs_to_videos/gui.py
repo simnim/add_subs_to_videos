@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -15,17 +16,20 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from .config import load_config, save_config
-from .files import VIDEO_EXTENSIONS, build_video_tree
+from .files import VIDEO_EXTENSIONS, find_videos
 from .runtime_paths import ensure_bundled_ffmpeg_on_path
 from .transcribe import process_directory
 
@@ -38,9 +42,8 @@ _OVERALL_PROGRESS_SCALE = 1000
 # scheme forced in main(), so secondary/hint labels use this darker grey.
 _MUTED_TEXT_STYLE = "color: #444444;"
 
-# Number of lines shown in the "Files to process" tree view before the rest
-# are collapsed into a "... and N more files" summary line.
-_TREE_VISIBLE_LINES = 6
+# Number of rows shown in the "Files to process" table before scrolling.
+_TABLE_VISIBLE_ROWS = 6
 
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
@@ -253,16 +256,16 @@ class DropZone(QFrame):
             self.folder_dropped.emit(path)
 
 
-class _TreeScanThread(QThread):
-    tree_ready = Signal(str)
+class _FileScanThread(QThread):
+    files_ready = Signal(object)
 
     def __init__(self, root: Path) -> None:
         super().__init__()
         self._root = root
 
     def run(self) -> None:
-        text = build_video_tree(self._root)
-        self.tree_ready.emit(text if text else "(no video files found)")
+        videos = [self._root] if self._root.is_file() else find_videos(self._root)
+        self.files_ready.emit(videos)
 
 
 class _WorkerThread(QThread):
@@ -396,24 +399,56 @@ class MainWindow(QMainWindow):
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
-        self._tree_threads: list[_TreeScanThread] = []
+        self._tree_threads: list[_FileScanThread] = []
         self._tree_scan_token = 0
-        self._tree_lines: list[str] = []
+        self._file_row_by_path: dict[Path, int] = {}
 
         self._tree_label = QLabel("Files to process")
         self._tree_label.setStyleSheet(_MUTED_TEXT_STYLE)
         self._tree_label.setVisible(False)
         layout.addWidget(self._tree_label)
 
-        self._tree_view = QLabel()
-        tree_font = QFont("monospace")
-        tree_font.setPointSize(9)
-        self._tree_view.setFont(tree_font)
-        self._tree_view.setTextFormat(Qt.TextFormat.PlainText)
-        self._tree_view.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self._tree_view.setFixedHeight(QFontMetrics(tree_font).height() * _TREE_VISIBLE_LINES)
-        self._tree_view.setVisible(False)
-        layout.addWidget(self._tree_view)
+        table_font = QFont("monospace")
+        table_font.setPointSize(9)
+
+        self._scan_message = QLabel()
+        self._scan_message.setFont(table_font)
+        self._scan_message.setStyleSheet(_MUTED_TEXT_STYLE)
+        self._scan_message.setTextFormat(Qt.TextFormat.PlainText)
+        self._scan_message.setVisible(False)
+        layout.addWidget(self._scan_message)
+
+        self._file_table = QTableWidget(0, 2)
+        self._file_table.setHorizontalHeaderLabels(["File", "Status"])
+        self._file_table.setFont(table_font)
+        self._file_table.verticalHeader().setVisible(False)
+        self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._file_table.setShowGrid(True)
+        self._file_table.setAlternatingRowColors(True)
+        header = self._file_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._file_table.setStyleSheet(
+            "QTableWidget {"
+            "  border: 1px solid palette(mid);"
+            "  gridline-color: palette(mid);"
+            "  background: palette(base);"
+            "}"
+            "QHeaderView::section {"
+            "  background: palette(window);"
+            "  border: none;"
+            "  border-bottom: 1px solid palette(mid);"
+            "  padding: 2px 6px;"
+            "}"
+        )
+        table_height = (
+            header.sizeHint().height()
+            + self._file_table.verticalHeader().defaultSectionSize() * _TABLE_VISIBLE_ROWS
+        )
+        self._file_table.setFixedHeight(table_height)
+        self._file_table.setVisible(False)
+        layout.addWidget(self._file_table)
 
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Model:"))
@@ -537,60 +572,71 @@ class MainWindow(QMainWindow):
         self._tree_scan_token += 1
         token = self._tree_scan_token
         self._tree_label.setVisible(True)
-        self._tree_view.setVisible(True)
-        self._tree_lines = ["Scanning…"]
-        self._update_tree_display()
-        thread = _TreeScanThread(path)
-        thread.tree_ready.connect(lambda text, t=token: self._on_tree_ready(t, text))
+        self._file_table.setVisible(False)
+        self._file_table.setRowCount(0)
+        self._file_row_by_path = {}
+        self._scan_message.setText("Scanning…")
+        self._scan_message.setVisible(True)
+        thread = _FileScanThread(path)
+        thread.files_ready.connect(lambda files, t=token: self._on_tree_ready(t, files))
         self._tree_threads.append(thread)
         thread.finished.connect(lambda t=thread: self._tree_threads.remove(t))
         thread.start()
 
-    def _on_tree_ready(self, token: int, text: str) -> None:
+    def _on_tree_ready(self, token: int, files: list[Path]) -> None:
         if token != self._tree_scan_token:
             return  # superseded by a newer selection
-        self._tree_lines = text.splitlines()
         try:
-            self._update_tree_display()
+            if not files:
+                self._file_table.setRowCount(0)
+                self._file_row_by_path = {}
+                self._file_table.setVisible(False)
+                self._scan_message.setText("(no video files found)")
+                self._scan_message.setVisible(True)
+                return
+
+            self._scan_message.setVisible(False)
+            self._file_table.setRowCount(len(files))
+            self._file_row_by_path = {}
+            for row, path in enumerate(files):
+                if self._folder is not None and self._folder.is_dir():
+                    try:
+                        label = str(path.relative_to(self._folder))
+                    except ValueError:
+                        label = path.name
+                else:
+                    label = path.name
+                self._file_table.setItem(row, 0, QTableWidgetItem(label))
+                self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
+                self._file_row_by_path[path] = row
+            self._file_table.setVisible(True)
         except RuntimeError:
             pass  # widget was destroyed (e.g. window closed) before the scan finished
 
     def _clear_tree_view(self) -> None:
         self._tree_scan_token += 1
-        self._tree_lines = []
+        self._file_row_by_path = {}
         self._tree_label.setVisible(False)
-        self._tree_view.setVisible(False)
-        self._tree_view.setText("")
-
-    def _update_tree_display(self) -> None:
-        if not self._tree_lines:
-            return
-        metrics = QFontMetrics(self._tree_view.font())
-        available_width = self._tree_view.width()
-
-        lines = self._tree_lines
-        if len(lines) > _TREE_VISIBLE_LINES:
-            shown = lines[: _TREE_VISIBLE_LINES - 1]
-            remaining = len(lines) - len(shown)
-            shown = shown + [f"... and {remaining} more files"]
-        else:
-            shown = lines
-
-        elided = [
-            metrics.elidedText(line, Qt.TextElideMode.ElideRight, available_width)
-            for line in shown
-        ]
-        self._tree_view.setText("\n".join(elided))
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._update_tree_display()
+        self._scan_message.setVisible(False)
+        self._scan_message.setText("")
+        self._file_table.setVisible(False)
+        self._file_table.setRowCount(0)
 
     def _append_log(self, line: str) -> None:
         self._log.appendPlainText(line)
         self._log.verticalScrollBar().setValue(
             self._log.verticalScrollBar().maximum()
         )
+
+    def _update_file_status(self, video: Path | None, status: str) -> None:
+        if video is None:
+            return
+        row = self._file_row_by_path.get(video)
+        if row is None:
+            return
+        item = self._file_table.item(row, 1)
+        if item is not None:
+            item.setText(status)
 
     def _on_progress(self, event) -> None:
         name = event.video.name if event.video else ""
@@ -605,6 +651,7 @@ class MainWindow(QMainWindow):
             self._file_bar.setValue(0)
             self._file_bar.setFormat(f"{name} — %p%")
             self._status_label.setText(f"Processing {name}")
+            self._update_file_status(event.video, "Processing")
         elif event.stage in ("done", "skip", "fail"):
             self._overall_bar.setRange(0, event.total * scale)
             self._overall_bar.setValue(event.index * scale)
@@ -612,6 +659,8 @@ class MainWindow(QMainWindow):
             self._file_bar.setValue(100)
             verb = {"done": "Finished", "skip": "Skipped", "fail": "Failed"}[event.stage]
             self._status_label.setText(f"{verb} {name}")
+            status = {"done": "Done", "skip": "Skipped", "fail": "Failed"}[event.stage]
+            self._update_file_status(event.video, status)
         elif event.stage == "summary":
             self._overall_bar.setRange(0, event.total * scale)
             self._overall_bar.setValue(event.total * scale)
