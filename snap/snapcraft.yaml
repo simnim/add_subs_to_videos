@@ -32,7 +32,7 @@ apps:
       - network         # whisper.cpp downloads model weights on first use
   add-subs-to-videos-gui:
     command: bin/add-subs-to-videos-gui
-    desktop: assets/add-subs-to-videos-gui.desktop
+    desktop: usr/share/applications/add-subs-to-videos-gui.desktop
     extensions: [gnome]
     plugs:
       - home
@@ -73,3 +73,7 @@ parts:
     override-pull: |
       craftctl default
       craftctl set version="$(cat VERSION)"
+    override-build: |
+      craftctl default
+      install -D -m644 "$CRAFT_PART_SRC/assets/add-subs-to-videos-gui.desktop" \
+        "$CRAFT_PART_INSTALL/usr/share/applications/add-subs-to-videos-gui.desktop"
