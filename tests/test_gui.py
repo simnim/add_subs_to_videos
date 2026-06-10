@@ -14,6 +14,7 @@ from add_subs_to_videos.gui import (
     MainWindow,
     _dev_icon_path,
     _OVERALL_PROGRESS_SCALE,
+    _TREE_VISIBLE_LINES,
     _TreeScanThread,
     _WorkerThread,
 )
@@ -144,45 +145,6 @@ class TestDropZone:
         with patch.object(QFileDialog, "getExistingDirectory", return_value=""):
             dz.mousePressEvent(MagicMock())
         assert received == []
-
-    def test_tree_view_hidden_and_empty_initially(self, dz):
-        assert dz._tree_view.isHidden()
-        assert dz._tree_view.toPlainText() == ""
-
-    def test_set_folder_shows_scanning_placeholder(self, dz, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        dz.set_folder(tmp_path)
-        assert not dz._tree_view.isHidden()
-        assert dz._tree_view.toPlainText() == "Scanning…"
-
-    def test_tree_ready_updates_view(self, dz, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        dz.set_folder(tmp_path)
-        token = dz._tree_scan_token
-        dz._on_tree_ready(token, "fake tree text")
-        assert dz._tree_view.toPlainText() == "fake tree text"
-
-    def test_stale_tree_result_ignored(self, dz, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        dz.set_folder(tmp_path)
-        stale_token = dz._tree_scan_token
-        dz.set_folder(tmp_path)
-        dz._on_tree_ready(stale_token, "stale")
-        assert dz._tree_view.toPlainText() == "Scanning…"
-
-    def test_set_folder_none_clears_and_hides_tree_view(self, dz, tmp_path, mocker):
-        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
-        dz.set_folder(tmp_path)
-        dz.set_folder(None)
-        assert dz._tree_view.isHidden()
-        assert dz._tree_view.toPlainText() == ""
-
-    def test_set_folder_populates_tree_view_end_to_end(self, dz, tmp_video_dir, qtbot):
-        dz.set_folder(tmp_video_dir)
-        qtbot.waitUntil(lambda: dz._tree_view.toPlainText() != "Scanning…", timeout=5000)
-        text = dz._tree_view.toPlainText()
-        assert "movie.mp4" in text
-        assert "M]" in text
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +592,78 @@ class TestMainWindow:
         window._worker = mocker.MagicMock()
         window._cancel_run()
         assert window._status_label.text() == "Cancelling…"
+
+    # -----------------------------------------------------------------------
+    # "Files to process" tree section
+    # -----------------------------------------------------------------------
+
+    def test_tree_view_hidden_and_empty_initially(self, window):
+        assert window._tree_label.isHidden()
+        assert window._tree_view.isHidden()
+        assert window._tree_view.text() == ""
+
+    def test_folder_set_shows_scanning_placeholder(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        assert not window._tree_label.isHidden()
+        assert not window._tree_view.isHidden()
+        assert window._tree_view.text() == "Scanning…"
+
+    def test_tree_ready_updates_view(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        token = window._tree_scan_token
+        window._on_tree_ready(token, "fake tree text")
+        assert window._tree_view.text() == "fake tree text"
+
+    def test_stale_tree_result_ignored(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        stale_token = window._tree_scan_token
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._on_tree_ready(stale_token, "stale")
+        assert window._tree_view.text() == "Scanning…"
+
+    def test_clear_selection_clears_and_hides_tree_view(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._TreeScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._clear_btn.click()
+        assert window._tree_label.isHidden()
+        assert window._tree_view.isHidden()
+        assert window._tree_view.text() == ""
+
+    def test_folder_dropped_populates_tree_view_end_to_end(self, window, tmp_video_dir, qtbot):
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        qtbot.waitUntil(lambda: window._tree_view.text() != "Scanning…", timeout=5000)
+        text = window._tree_view.text()
+        assert "M]" in text
+
+    def test_update_tree_display_elides_long_lines(self, window):
+        long_line = "├── [0.0M]  " + "x" * 500 + ".mp4"
+        window._tree_lines = [long_line]
+        window.resize(300, window.height())
+        window._update_tree_display()
+        text = window._tree_view.text()
+        assert text != long_line
+        assert text.startswith("├── [0.0M]  x")
+        assert "…" in text
+
+    def test_update_tree_display_truncates_with_more_files_summary(self, window):
+        window._tree_lines = [f"line{i}" for i in range(_TREE_VISIBLE_LINES + 3)]
+        window._update_tree_display()
+        lines = window._tree_view.text().split("\n")
+        assert len(lines) == _TREE_VISIBLE_LINES
+        assert lines[:-1] == [f"line{i}" for i in range(_TREE_VISIBLE_LINES - 1)]
+        assert lines[-1] == "... and 4 more files"
+
+    def test_resize_re_elides_tree_view(self, window, mocker):
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QResizeEvent
+
+        window._tree_lines = ["├── [0.0M]  " + "x" * 500 + ".mp4"]
+        spy = mocker.spy(window, "_update_tree_display")
+        window.resizeEvent(QResizeEvent(QSize(400, 600), QSize(560, 600)))
+        spy.assert_called()
 
 
 # ---------------------------------------------------------------------------

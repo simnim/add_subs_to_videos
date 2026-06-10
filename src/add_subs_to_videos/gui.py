@@ -38,6 +38,10 @@ _OVERALL_PROGRESS_SCALE = 1000
 # scheme forced in main(), so secondary/hint labels use this darker grey.
 _MUTED_TEXT_STYLE = "color: #444444;"
 
+# Number of lines shown in the "Files to process" tree view before the rest
+# are collapsed into a "... and N more files" summary line.
+_TREE_VISIBLE_LINES = 6
+
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
 _LANGUAGES: list[tuple[str, str]] = [
@@ -116,8 +120,6 @@ class DropZone(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(self._STYLE)
         self._folder_path: Path | None = None
-        self._tree_threads: list[_TreeScanThread] = []
-        self._tree_scan_token = 0
 
         layout = QGridLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -125,7 +127,6 @@ class DropZone(QFrame):
         layout.setVerticalSpacing(2)
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 1)
-        layout.setColumnStretch(2, 2)
 
         self._icon_label = QLabel("\U0001F5B1️ ➡️ \U0001F449")
         icon_font = QFont()
@@ -184,17 +185,6 @@ class DropZone(QFrame):
         subtitle_layout.addWidget(self._path_label)
         layout.addWidget(subtitle_box, 1, 1)
 
-        self._tree_view = QPlainTextEdit()
-        self._tree_view.setReadOnly(True)
-        tree_font = QFont("monospace")
-        tree_font.setPointSize(9)
-        self._tree_view.setFont(tree_font)
-        self._tree_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self._tree_view.setMinimumHeight(80)
-        self._tree_view.setMaximumHeight(120)
-        self._tree_view.setVisible(False)
-        layout.addWidget(self._tree_view, 0, 2, 2, 1)
-
         self.set_folder(None)
 
     def _update_selection_path_label(self, text: str) -> None:
@@ -207,8 +197,6 @@ class DropZone(QFrame):
 
     def set_folder(self, path: Path | None) -> None:
         self._folder_path = path
-        self._tree_scan_token += 1
-        token = self._tree_scan_token
         if path is None:
             self.setStyleSheet(self._STYLE)
             self.setToolTip("")
@@ -218,8 +206,6 @@ class DropZone(QFrame):
             self._selection_path_label.setText("")
             self._name_label.setVisible(True)
             self._path_label.setVisible(True)
-            self._tree_view.setVisible(False)
-            self._tree_view.setPlainText("")
         else:
             self.setStyleSheet(self._SELECTED_STYLE)
             if path.is_dir():
@@ -233,22 +219,6 @@ class DropZone(QFrame):
             self._name_label.setVisible(False)
             self._path_label.setVisible(False)
             self.setToolTip(str(path))
-
-            self._tree_view.setVisible(True)
-            self._tree_view.setPlainText("Scanning…")
-            thread = _TreeScanThread(path)
-            thread.tree_ready.connect(lambda text, t=token: self._on_tree_ready(t, text))
-            self._tree_threads.append(thread)
-            thread.finished.connect(lambda t=thread: self._tree_threads.remove(t))
-            thread.start()
-
-    def _on_tree_ready(self, token: int, text: str) -> None:
-        if token != self._tree_scan_token:
-            return
-        try:
-            self._tree_view.setPlainText(text)
-        except RuntimeError:
-            pass  # widget was destroyed (e.g. window closed) before the scan finished
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -426,6 +396,25 @@ class MainWindow(QMainWindow):
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
+        self._tree_threads: list[_TreeScanThread] = []
+        self._tree_scan_token = 0
+        self._tree_lines: list[str] = []
+
+        self._tree_label = QLabel("Files to process")
+        self._tree_label.setStyleSheet(_MUTED_TEXT_STYLE)
+        self._tree_label.setVisible(False)
+        layout.addWidget(self._tree_label)
+
+        self._tree_view = QLabel()
+        tree_font = QFont("monospace")
+        tree_font.setPointSize(9)
+        self._tree_view.setFont(tree_font)
+        self._tree_view.setTextFormat(Qt.TextFormat.PlainText)
+        self._tree_view.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._tree_view.setFixedHeight(QFontMetrics(tree_font).height() * _TREE_VISIBLE_LINES)
+        self._tree_view.setVisible(False)
+        layout.addWidget(self._tree_view)
+
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Model:"))
         self._model_combo = QComboBox()
@@ -514,6 +503,7 @@ class MainWindow(QMainWindow):
             self._run_btn.setEnabled(True)
             self._change_hint.setVisible(True)
             self._clear_btn.setHidden(False)
+            self._start_tree_scan(path)
 
     def _save_prefs(self) -> None:
         save_config({
@@ -532,6 +522,7 @@ class MainWindow(QMainWindow):
         self._change_hint.setVisible(True)
         self._clear_btn.setHidden(False)
         self._save_prefs()
+        self._start_tree_scan(path)
 
     def _clear_selection(self) -> None:
         self._folder = None
@@ -540,6 +531,60 @@ class MainWindow(QMainWindow):
         self._clear_btn.setHidden(True)
         self._change_hint.setVisible(False)
         self._save_prefs()
+        self._clear_tree_view()
+
+    def _start_tree_scan(self, path: Path) -> None:
+        self._tree_scan_token += 1
+        token = self._tree_scan_token
+        self._tree_label.setVisible(True)
+        self._tree_view.setVisible(True)
+        self._tree_lines = ["Scanning…"]
+        self._update_tree_display()
+        thread = _TreeScanThread(path)
+        thread.tree_ready.connect(lambda text, t=token: self._on_tree_ready(t, text))
+        self._tree_threads.append(thread)
+        thread.finished.connect(lambda t=thread: self._tree_threads.remove(t))
+        thread.start()
+
+    def _on_tree_ready(self, token: int, text: str) -> None:
+        if token != self._tree_scan_token:
+            return  # superseded by a newer selection
+        self._tree_lines = text.splitlines()
+        try:
+            self._update_tree_display()
+        except RuntimeError:
+            pass  # widget was destroyed (e.g. window closed) before the scan finished
+
+    def _clear_tree_view(self) -> None:
+        self._tree_scan_token += 1
+        self._tree_lines = []
+        self._tree_label.setVisible(False)
+        self._tree_view.setVisible(False)
+        self._tree_view.setText("")
+
+    def _update_tree_display(self) -> None:
+        if not self._tree_lines:
+            return
+        metrics = QFontMetrics(self._tree_view.font())
+        available_width = self._tree_view.width()
+
+        lines = self._tree_lines
+        if len(lines) > _TREE_VISIBLE_LINES:
+            shown = lines[: _TREE_VISIBLE_LINES - 1]
+            remaining = len(lines) - len(shown)
+            shown = shown + [f"... and {remaining} more files"]
+        else:
+            shown = lines
+
+        elided = [
+            metrics.elidedText(line, Qt.TextElideMode.ElideRight, available_width)
+            for line in shown
+        ]
+        self._tree_view.setText("\n".join(elided))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_tree_display()
 
     def _append_log(self, line: str) -> None:
         self._log.appendPlainText(line)
