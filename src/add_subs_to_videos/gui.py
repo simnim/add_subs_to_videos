@@ -180,6 +180,8 @@ class DropZone(QFrame):
             self._selection_name_label.setText("")
             self._selection_path_label.setVisible(False)
             self._selection_path_label.setText("")
+            self._name_label.setVisible(True)
+            self._path_label.setVisible(True)
         else:
             self.setStyleSheet(self._SELECTED_STYLE)
             if path.is_dir():
@@ -190,6 +192,8 @@ class DropZone(QFrame):
             self._selection_name_label.setText(f"{label}: {icon} {path.name or str(path)}")
             self._selection_path_label.setVisible(True)
             self._update_selection_path_label(str(path))
+            self._name_label.setVisible(False)
+            self._path_label.setVisible(False)
             self.setToolTip(str(path))
 
     def resizeEvent(self, event) -> None:
