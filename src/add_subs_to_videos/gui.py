@@ -438,8 +438,8 @@ class MainWindow(QMainWindow):
         self._scan_message.setVisible(False)
         layout.addWidget(self._scan_message)
 
-        self._file_table = QTableWidget(0, 2)
-        self._file_table.setHorizontalHeaderLabels(["File", "Status"])
+        self._file_table = QTableWidget(0, 3)
+        self._file_table.setHorizontalHeaderLabels(["Location", "File", "Status"])
         self._file_table.setFont(table_font)
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -447,8 +447,9 @@ class MainWindow(QMainWindow):
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
         header = self._file_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._file_table.setStyleSheet(
             "QTableWidget {"
             "  border: 1px solid palette(mid);"
@@ -619,15 +620,16 @@ class MainWindow(QMainWindow):
             self._file_table.setRowCount(len(files))
             self._file_row_by_path = {}
             for row, path in enumerate(files):
+                location = ""
                 if self._folder is not None and self._folder.is_dir():
                     try:
-                        label = str(path.relative_to(self._folder))
+                        rel_parent = path.relative_to(self._folder).parent
+                        location = "" if rel_parent == Path(".") else str(rel_parent)
                     except ValueError:
-                        label = path.name
-                else:
-                    label = path.name
-                self._file_table.setItem(row, 0, QTableWidgetItem(label))
-                self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
+                        pass
+                self._file_table.setItem(row, 0, QTableWidgetItem(location))
+                self._file_table.setItem(row, 1, QTableWidgetItem(path.name))
+                self._file_table.setItem(row, 2, QTableWidgetItem("Pending"))
                 self._file_row_by_path[path] = row
             self._file_table.setVisible(True)
         except RuntimeError:
@@ -654,7 +656,7 @@ class MainWindow(QMainWindow):
         row = self._file_row_by_path.get(video)
         if row is None:
             return
-        item = self._file_table.item(row, 1)
+        item = self._file_table.item(row, 2)
         if item is None:
             return
         if status == "Done":
