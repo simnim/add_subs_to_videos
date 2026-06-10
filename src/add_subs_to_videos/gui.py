@@ -5,8 +5,8 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QIcon
+from PySide6.QtCore import QPoint, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -44,6 +44,24 @@ _MUTED_TEXT_STYLE = "color: #444444;"
 
 # Number of rows shown in the "Files to process" table before scrolling.
 _TABLE_VISIBLE_ROWS = 6
+
+
+def _check_icon(color: QColor) -> QIcon:
+    """Render a checkmark glyph as a QIcon in the given color."""
+    size = 16
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = painter.pen()
+    pen.setColor(color)
+    pen.setWidth(2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawPolyline([QPoint(3, 8), QPoint(7, 12), QPoint(13, 4)])
+    painter.end()
+    return QIcon(pixmap)
 
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
@@ -402,6 +420,8 @@ class MainWindow(QMainWindow):
         self._tree_threads: list[_FileScanThread] = []
         self._tree_scan_token = 0
         self._file_row_by_path: dict[Path, int] = {}
+        self._done_icon = _check_icon(QColor("#2e7d32"))
+        self._skipped_icon = _check_icon(QColor("#9e9e9e"))
 
         self._tree_label = QLabel("Files to process")
         self._tree_label.setStyleSheet(_MUTED_TEXT_STYLE)
@@ -635,8 +655,20 @@ class MainWindow(QMainWindow):
         if row is None:
             return
         item = self._file_table.item(row, 1)
-        if item is not None:
+        if item is None:
+            return
+        if status == "Done":
+            item.setIcon(self._done_icon)
+            item.setText("")
+            item.setToolTip("Done")
+        elif status == "Skipped":
+            item.setIcon(self._skipped_icon)
+            item.setText("")
+            item.setToolTip("Skipped")
+        else:
+            item.setIcon(QIcon())
             item.setText(status)
+            item.setToolTip("")
 
     def _on_progress(self, event) -> None:
         name = event.video.name if event.video else ""
