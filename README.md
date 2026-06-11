@@ -37,7 +37,7 @@ pipx install "add-subs-to-videos[gui]"
 ```
 This installs both the `add_subs_to_videos` CLI and the `add-subs-to-videos-gui` GUI entry point. Drop `[gui]` if you only want the CLI.
 
-> `pywhispercpp` compiles a C++ extension at install time (requires CMake — `brew install cmake ffmpeg` on macOS). On Linux with CUDA:
+> `pywhispercpp` compiles a C++ extension at install time (requires CMake — `brew install cmake ffmpeg` on macOS, or on Ubuntu/Debian `sudo apt install cmake ffmpeg`). `ffmpeg`/`ffprobe` are also needed at runtime to decode non-WAV media and show per-file progress. On Linux with CUDA:
 > ```bash
 > WHISPER_CUDA=1 pip install "add-subs-to-videos[gui]"
 > ```
