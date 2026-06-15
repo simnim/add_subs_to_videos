@@ -9,6 +9,7 @@ from add_subs_to_videos.files import VIDEO_EXTENSIONS, build_video_tree, find_vi
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
 from add_subs_to_videos.transcribe import (
     _Cancelled,
+    _describe_transcription_error,
     _format_log_timestamp,
     _probe_duration,
     _raw_to_dicts,
@@ -449,25 +450,85 @@ class TestProbeDuration:
         mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
         assert _probe_duration(tmp_path / "clip.mp4") == 12.5
 
-    def test_returns_none_when_ffprobe_missing(self, tmp_path, mocker):
+    def test_returns_none_and_logs_when_ffprobe_missing(self, tmp_path, mocker, caplog):
         mocker.patch(
             "add_subs_to_videos.transcribe.subprocess.run", side_effect=FileNotFoundError
         )
-        assert _probe_duration(tmp_path / "clip.mp4") is None
+        with caplog.at_level("DEBUG", logger="root"):
+            assert _probe_duration(tmp_path / "clip.mp4") is None
+        assert "ffprobe not found" in caplog.text
 
-    def test_returns_none_when_ffprobe_fails(self, tmp_path, mocker):
+    def test_returns_none_and_logs_when_ffprobe_fails(self, tmp_path, mocker, caplog):
+        import subprocess
+
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, "ffprobe", stderr="boom"),
+        )
+        with caplog.at_level("DEBUG", logger="root"):
+            assert _probe_duration(tmp_path / "clip.mp4") is None
+        assert "boom" in caplog.text
+
+    def test_returns_none_and_logs_when_ffprobe_fails_without_stderr(self, tmp_path, mocker, caplog):
         import subprocess
 
         mocker.patch(
             "add_subs_to_videos.transcribe.subprocess.run",
             side_effect=subprocess.CalledProcessError(1, "ffprobe"),
         )
-        assert _probe_duration(tmp_path / "clip.mp4") is None
+        with caplog.at_level("DEBUG", logger="root"):
+            assert _probe_duration(tmp_path / "clip.mp4") is None
+        assert "ffprobe failed" in caplog.text
 
-    def test_returns_none_when_output_is_not_a_number(self, tmp_path, mocker):
+    def test_returns_none_and_logs_when_output_is_not_a_number(self, tmp_path, mocker, caplog):
         result = mocker.MagicMock(stdout="N/A\n")
         mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
-        assert _probe_duration(tmp_path / "clip.mp4") is None
+        with caplog.at_level("DEBUG", logger="root"):
+            assert _probe_duration(tmp_path / "clip.mp4") is None
+        assert "non-numeric duration" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _describe_transcription_error
+# ---------------------------------------------------------------------------
+
+
+class TestDescribeTranscriptionError:
+    def test_non_called_process_error_passthrough(self, tmp_path):
+        exc = RuntimeError("boom")
+        assert _describe_transcription_error(tmp_path / "clip.mp4", exc) == "RuntimeError: boom"
+
+    def test_exception_with_empty_message_uses_type_name_only(self, tmp_path):
+        exc = RuntimeError()
+        assert _describe_transcription_error(tmp_path / "clip.mp4", exc) == "RuntimeError"
+
+    def test_called_process_error_uses_ffmpeg_stderr(self, tmp_path, mocker):
+        import subprocess
+
+        exc = subprocess.CalledProcessError(1, "ffmpeg")
+        result = mocker.MagicMock(
+            stderr="Some warning\nInvalid data found when processing input\n"
+        )
+        mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
+        msg = _describe_transcription_error(tmp_path / "clip.mp4", exc)
+        assert msg == "ffmpeg: Some warning; Invalid data found when processing input"
+
+    def test_called_process_error_falls_back_when_no_stderr(self, tmp_path, mocker):
+        import subprocess
+
+        exc = subprocess.CalledProcessError(1, "ffmpeg")
+        result = mocker.MagicMock(stderr="")
+        mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=result)
+        assert _describe_transcription_error(tmp_path / "clip.mp4", exc) == f"CalledProcessError: {exc}"
+
+    def test_called_process_error_falls_back_when_ffmpeg_missing(self, tmp_path, mocker):
+        import subprocess
+
+        exc = subprocess.CalledProcessError(1, "ffmpeg")
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run", side_effect=FileNotFoundError
+        )
+        assert _describe_transcription_error(tmp_path / "clip.mp4", exc) == f"CalledProcessError: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +837,28 @@ class TestProcessDirectory:
             process_directory(tmp_path, **_COMMON_KWARGS)
 
         assert exc_info.value.code == 1
+
+    def test_called_process_error_uses_ffmpeg_diagnostic(self, tmp_path, mock_transcribe, mocker, caplog):
+        import subprocess
+
+        (tmp_path / "clip.mp4").touch()
+        mock_transcribe.model.transcribe.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
+        diag_result = mocker.MagicMock(stderr="Invalid data found when processing input\n")
+        mocker.patch("add_subs_to_videos.transcribe.subprocess.run", return_value=diag_result)
+
+        with caplog.at_level("WARNING", logger="root"), pytest.raises(SystemExit):
+            process_directory(tmp_path, **_COMMON_KWARGS)
+
+        assert "ffmpeg: Invalid data found when processing input" in caplog.text
+
+    def test_warns_when_ffmpeg_missing(self, tmp_path, mock_transcribe, mocker, caplog):
+        (tmp_path / "clip.mp4").touch()
+        mocker.patch("add_subs_to_videos.transcribe.shutil.which", return_value=None)
+
+        with caplog.at_level("WARNING", logger="root"):
+            process_directory(tmp_path, **_COMMON_KWARGS)
+
+        assert "ffmpeg not found on PATH" in caplog.text
 
     def test_all_succeed_no_exit(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()

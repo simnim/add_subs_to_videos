@@ -176,6 +176,16 @@ class TestFileScanThread:
         thread.run()
         assert received == [[]]
 
+    def test_emits_empty_list_when_root_does_not_exist(self, tmp_path, qapp, caplog):
+        missing = tmp_path / "deleted"
+        thread = _FileScanThread(missing)
+        received = []
+        thread.files_ready.connect(received.append)
+        with caplog.at_level("WARNING", logger="root"):
+            thread.run()
+        assert received == [[]]
+        assert "Could not scan" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # _WorkerThread  (run() called directly — synchronous, process_directory mocked)
@@ -251,6 +261,19 @@ class TestWorkerThread:
         thread.finished_run.connect(results.append)
         thread.run()
         assert results == [True]
+
+    def test_unexpected_exception_logs_traceback_and_finishes_false(self, thread, mock_pd):
+        mock_pd.side_effect = RuntimeError("model load failed")
+        lines = []
+        results = []
+        thread.log_line.connect(lines.append)
+        thread.finished_run.connect(results.append)
+        thread.run()
+
+        assert results == [False]
+        log_text = "\n".join(lines)
+        assert "model load failed" in log_text
+        assert "Traceback" in log_text
 
     def test_finished_run_false_on_exception(self, thread, mock_pd):
         mock_pd.side_effect = RuntimeError("boom")

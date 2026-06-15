@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ def _prepend_to_path(directory: Path) -> None:
     if path.split(os.pathsep)[0] == str(directory):
         return  # already prepended; avoid duplicate entries if called more than once
 
+    logging.debug("Prepending bundled ffmpeg directory to PATH: %s", directory)
     os.environ["PATH"] = os.pathsep.join([str(directory), path])
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import sys
 import threading
@@ -60,8 +61,47 @@ def _probe_duration(path: Path) -> float | None:
             text=True,
         )
         return float(result.stdout.strip())
-    except (OSError, subprocess.CalledProcessError, ValueError):
+    except FileNotFoundError:
+        logging.debug("ffprobe not found; per-file progress will be unavailable")
         return None
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else str(exc)
+        logging.debug("ffprobe failed for %s: %s", path, stderr)
+        return None
+    except ValueError:
+        logging.debug("ffprobe returned a non-numeric duration for %s", path)
+        return None
+
+
+def _describe_transcription_error(video_path: Path, exc: Exception) -> str:
+    """Returns a human-readable description of a transcription failure.
+
+    pywhispercpp converts non-WAV media via its own `ffmpeg` subprocess call
+    with stdout/stderr discarded, so a `CalledProcessError` from it carries no
+    detail. Re-run the same conversion ourselves, capturing stderr, to surface
+    the actual ffmpeg error (e.g. unsupported codec, corrupt file).
+    """
+    label = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    if not isinstance(exc, subprocess.CalledProcessError):
+        return label
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error",
+                "-i", str(video_path),
+                "-ac", "1", "-ar", "16000",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return label
+    stderr_lines = [line for line in result.stderr.splitlines() if line.strip()]
+    if stderr_lines:
+        logging.debug("ffmpeg diagnostic output for %s:\n%s", video_path, result.stderr.strip())
+        return f"ffmpeg: {'; '.join(stderr_lines)}"
+    return label
 
 
 def transcribe_video(
@@ -76,6 +116,8 @@ def transcribe_video(
     extra: dict = {}
     if cancel is not None or on_segment is not None or on_file_progress is not None:
         duration = _probe_duration(video_path) if on_file_progress is not None else None
+        if on_file_progress is not None:
+            logging.debug("Probed duration for %s: %s", video_path.name, duration)
 
         def _on_new_segment(segment) -> None:
             if cancel is not None and cancel.is_set():
@@ -113,8 +155,16 @@ def process_directory(
         logging.warning("No video files found under %s", root)
         return
 
+    if shutil.which("ffmpeg") is None:
+        logging.warning(
+            "ffmpeg not found on PATH — transcription of non-WAV files will fail. "
+            "Install ffmpeg or ensure it is on PATH."
+        )
+
     logging.info("Loading model '%s'", model_name)
+    t_load = time.monotonic()
     model = Model(model_name)
+    logging.debug("Model '%s' loaded in %.1fs", model_name, time.monotonic() - t_load)
 
     total = len(videos)
     failed: list[tuple[Path, str]] = []
@@ -204,8 +254,9 @@ def process_directory(
                 logging.info("Cancelled.")
                 break
             except Exception as exc:
-                logging.error("FAIL  %s: %s", video_path, exc, exc_info=True)
-                failed.append((video_path, str(exc)))
+                reason = _describe_transcription_error(video_path, exc)
+                logging.error("FAIL  %s: %s", video_path, reason, exc_info=True)
+                failed.append((video_path, reason))
                 bar.n = index
                 bar.refresh()
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))

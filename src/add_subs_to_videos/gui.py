@@ -290,7 +290,11 @@ class _FileScanThread(QThread):
         self._root = root
 
     def run(self) -> None:
-        videos = [self._root] if self._root.is_file() else find_videos(self._root)
+        try:
+            videos = [self._root] if self._root.is_file() else find_videos(self._root)
+        except SystemExit as exc:
+            logging.warning("Could not scan %s: %s", self._root, exc)
+            videos = []
         self.files_ready.emit(videos)
 
 
@@ -354,8 +358,8 @@ class _WorkerThread(QThread):
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
-        except Exception as exc:
-            self.log_line.emit(f"ERROR    {exc}")
+        except Exception:
+            logging.exception("Unexpected error")
             success = False
         finally:
             sys.stdout = saved_stdout
