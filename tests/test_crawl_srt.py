@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from add_subs_to_videos.files import VIDEO_EXTENSIONS, build_video_tree, find_vi
 from add_subs_to_videos.srt import format_srt_timestamp, segments_to_srt
 from add_subs_to_videos.transcribe import (
     _Cancelled,
+    _capture_native_output,
     _describe_transcription_error,
     _format_log_timestamp,
     _probe_duration,
@@ -532,6 +534,33 @@ class TestDescribeTranscriptionError:
 
 
 # ---------------------------------------------------------------------------
+# _capture_native_output
+# ---------------------------------------------------------------------------
+
+
+class TestCaptureNativeOutput:
+    def test_noop_when_not_at_debug_level(self, caplog, capfd):
+        import os
+
+        with caplog.at_level("INFO", logger="root"):
+            with _capture_native_output("whisper.cpp"):
+                os.write(1, b"stdout line\n")
+
+        assert "stdout line" not in caplog.text
+        assert "stdout line" in capfd.readouterr().out
+
+    def test_restores_stdout_and_stderr_fds_after_use(self, caplog, capfd):
+        import os
+
+        with caplog.at_level("DEBUG", logger="root"):
+            with _capture_native_output("whisper.cpp"):
+                pass
+            os.write(1, b"after capture\n")
+
+        assert "after capture" in capfd.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # transcribe_video
 # ---------------------------------------------------------------------------
 
@@ -568,6 +597,44 @@ class TestTranscribeVideo:
         video.touch()
         with pytest.raises(RuntimeError, match="GPU OOM"):
             transcribe_video(video, model=mock_transcribe.model, language=None)
+
+    def test_logs_detected_language_when_auto_and_verbose(self, tmp_path, mock_transcribe, caplog):
+        import numpy as np
+
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        mock_transcribe.model.auto_detect_language.return_value = (("en", np.float32(0.97)), {})
+
+        with caplog.at_level("DEBUG", logger="root"):
+            transcribe_video(video, model=mock_transcribe.model, language=None)
+
+        assert "Detected language for clip.mp4: en (97%)" in caplog.text
+
+    def test_skips_language_detection_when_language_pinned(self, tmp_path, mock_transcribe, caplog):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        with caplog.at_level("DEBUG", logger="root"):
+            transcribe_video(video, model=mock_transcribe.model, language="en")
+
+        mock_transcribe.model.auto_detect_language.assert_not_called()
+
+    def test_skips_language_detection_when_not_verbose(self, tmp_path, mock_transcribe):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        transcribe_video(video, model=mock_transcribe.model, language=None)
+        mock_transcribe.model.auto_detect_language.assert_not_called()
+
+    def test_language_detection_failure_is_logged_and_does_not_raise(self, tmp_path, mock_transcribe, caplog):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        mock_transcribe.model.auto_detect_language.side_effect = RuntimeError("decode failed")
+
+        with caplog.at_level("DEBUG", logger="root"):
+            result = transcribe_video(video, model=mock_transcribe.model, language=None)
+
+        assert "Language detection failed for clip.mp4" in caplog.text
+        assert "-->" in result
 
     def test_no_callback_passed_when_cancel_is_none(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
@@ -859,6 +926,20 @@ class TestProcessDirectory:
             process_directory(tmp_path, **_COMMON_KWARGS)
 
         assert "ffmpeg not found on PATH" in caplog.text
+
+    def test_logs_number_of_videos_found(self, tmp_video_dir, mock_transcribe, caplog):
+        with caplog.at_level("INFO", logger="root"):
+            process_directory(tmp_video_dir, **_COMMON_KWARGS)
+
+        assert f"Found 3 video file(s) under {tmp_video_dir}" in caplog.text
+
+    def test_done_log_includes_elapsed_seconds(self, tmp_path, mock_transcribe, caplog):
+        (tmp_path / "clip.mp4").touch()
+
+        with caplog.at_level("INFO", logger="root"):
+            process_directory(tmp_path, **_COMMON_KWARGS)
+
+        assert re.search(r"DONE\s+clip\.mp4 -> clip\.srt \(\d+\.\d+s\)", caplog.text)
 
     def test_all_succeed_no_exit(self, tmp_path, mock_transcribe):
         (tmp_path / "clip.mp4").touch()

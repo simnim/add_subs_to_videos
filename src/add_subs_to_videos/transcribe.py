@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -14,7 +17,7 @@ from pywhispercpp.model import Model
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from .files import find_videos
+from .files import find_videos, format_size_mb
 from .srt import segments_to_srt
 
 
@@ -104,6 +107,57 @@ def _describe_transcription_error(video_path: Path, exc: Exception) -> str:
     return label
 
 
+@contextlib.contextmanager
+def _capture_native_output(logger_name: str):
+    """Routes the wrapped block's OS-level stdout/stderr fds to `logging.debug`.
+
+    whisper.cpp writes diagnostics (backend selection, system info, model load
+    details) directly to the C stdout/stderr streams via fprintf, bypassing
+    Python's `logging` entirely. Only safe to use around one-shot,
+    non-interactive calls such as model loading — never during per-file
+    transcription, since it would also swallow tqdm's progress-bar output.
+    """
+    logger = logging.getLogger(logger_name)
+    if not logger.isEnabledFor(logging.DEBUG):
+        yield
+        return
+    try:
+        stdout_fd = sys.stdout.fileno()
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, OSError, io.UnsupportedOperation):
+        yield
+        return
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved_stdout = os.dup(stdout_fd)
+    saved_stderr = os.dup(stderr_fd)
+    read_fd, write_fd = os.pipe()
+    os.dup2(write_fd, stdout_fd)
+    os.dup2(write_fd, stderr_fd)
+    os.close(write_fd)
+
+    def _pump() -> None:
+        with os.fdopen(read_fd) as reader:
+            for line in reader:
+                line = line.rstrip()
+                if line:
+                    logger.debug(line)
+
+    thread = threading.Thread(target=_pump, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved_stdout, stdout_fd)
+        os.dup2(saved_stderr, stderr_fd)
+        os.close(saved_stdout)
+        os.close(saved_stderr)
+        thread.join(timeout=1)
+
+
 def transcribe_video(
     video_path: Path,
     *,
@@ -112,11 +166,12 @@ def transcribe_video(
     cancel: threading.Event | None = None,
     on_segment: Callable[[str], None] | None = None,
     on_file_progress: Callable[[float], None] | None = None,
+    duration: float | None = None,
 ) -> str:
     extra: dict = {}
     if cancel is not None or on_segment is not None or on_file_progress is not None:
-        duration = _probe_duration(video_path) if on_file_progress is not None else None
-        if on_file_progress is not None:
+        if on_file_progress is not None and duration is None:
+            duration = _probe_duration(video_path)
             logging.debug("Probed duration for %s: %s", video_path.name, duration)
 
         def _on_new_segment(segment) -> None:
@@ -132,6 +187,16 @@ def transcribe_video(
                 on_file_progress(min(segment.t1 / 100.0 / duration, 1.0))
 
         extra["new_segment_callback"] = _on_new_segment
+
+    if language is None and logging.getLogger().isEnabledFor(logging.DEBUG):
+        try:
+            (detected_lang, probability), _ = model.auto_detect_language(str(video_path))
+            logging.debug(
+                "Detected language for %s: %s (%.0f%%)",
+                video_path.name, detected_lang, probability * 100,
+            )
+        except Exception:
+            logging.debug("Language detection failed for %s", video_path.name, exc_info=True)
 
     raw_segs = model.transcribe(str(video_path), language=language or "", **extra)
     segments = _raw_to_dicts(raw_segs)
@@ -154,6 +219,7 @@ def process_directory(
     if not videos:
         logging.warning("No video files found under %s", root)
         return
+    logging.info("Found %d video file(s) under %s", len(videos), root)
 
     if shutil.which("ffmpeg") is None:
         logging.warning(
@@ -163,7 +229,8 @@ def process_directory(
 
     logging.info("Loading model '%s'", model_name)
     t_load = time.monotonic()
-    model = Model(model_name)
+    with _capture_native_output("whisper.cpp"):
+        model = Model(model_name)
     logging.debug("Model '%s' loaded in %.1fs", model_name, time.monotonic() - t_load)
 
     total = len(videos)
@@ -235,6 +302,13 @@ def process_directory(
                 continue
 
             logging.info("START %s", video_path)
+            size = video_path.stat().st_size
+            duration = _probe_duration(video_path)
+            duration_str = _format_log_timestamp(duration) if duration is not None else "unknown"
+            logging.debug(
+                "%s: size=%s duration=%s", video_path.name, format_size_mb(size), duration_str
+            )
+            t_file = time.monotonic()
             try:
                 srt_content = transcribe_video(
                     video_path,
@@ -243,9 +317,13 @@ def process_directory(
                     cancel=cancel,
                     on_segment=on_segment,
                     on_file_progress=_file_progress,
+                    duration=duration,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
-                logging.info("DONE  %s -> %s", video_path.name, srt_path.name)
+                logging.info(
+                    "DONE  %s -> %s (%.1fs)",
+                    video_path.name, srt_path.name, time.monotonic() - t_file,
+                )
                 _file_progress(1.0)
                 transcribed += 1
                 bar.set_postfix(done=transcribed, skip=skipped, fail=len(failed))
