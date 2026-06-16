@@ -52,6 +52,7 @@ parts:
       - pyside6        # installs the `gui` extra's GUI runtime alongside the CLI
     stage-packages:
       - ffmpeg
+      - libblas3        # ffmpeg runtime dep (LAPACK-based filters)
       - libgomp1        # OpenMP runtime required by whisper.cpp
       # Qt6/PySide6 GUI runtime libraries
       - libegl1
