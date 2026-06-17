@@ -7,7 +7,15 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QPoint, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -64,6 +72,13 @@ def _check_icon(color: QColor) -> QIcon:
     painter.drawPolyline([QPoint(3, 8), QPoint(7, 12), QPoint(13, 4)])
     painter.end()
     return QIcon(pixmap)
+
+
+def _monospace_font(point_size: int) -> QFont:
+    """Return the platform's fixed-pitch font (Menlo/Consolas/DejaVu Sans Mono)."""
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    font.setPointSize(point_size)
+    return font
 
 
 def _emoji_icon(emoji: str, size: int = 16) -> QIcon:
@@ -521,8 +536,7 @@ class MainWindow(QMainWindow):
         tree_header_row.addWidget(self._counts_label)
         layout.addLayout(tree_header_row)
 
-        table_font = QFont("monospace")
-        table_font.setPointSize(11)
+        table_font = _monospace_font(11)
 
         self._scan_message = QLabel()
         self._scan_message.setFont(table_font)
@@ -703,8 +717,6 @@ class MainWindow(QMainWindow):
                 self._file_table.setItem(row, 0, QTableWidgetItem(display))
                 self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
                 logs_item = QTableWidgetItem()
-                logs_item.setIcon(self._scroll_icon)
-                logs_item.setToolTip("Click to read logs")
                 logs_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._file_table.setItem(row, 2, logs_item)
                 self._file_row_by_path[path] = row
@@ -728,7 +740,15 @@ class MainWindow(QMainWindow):
 
     def _on_log_line(self, video: Path | None, line: str) -> None:
         if video is not None:
+            is_first_line = video not in self._file_logs
             self._file_logs.setdefault(video, []).append(line)
+            if is_first_line:
+                row = self._file_row_by_path.get(video)
+                if row is not None:
+                    item = self._file_table.item(row, 2)
+                    if item is not None:
+                        item.setIcon(self._scroll_icon)
+                        item.setToolTip("Click to read logs")
             log_view = self._open_log_dialogs.get(video)
             if log_view is not None:
                 log_view.appendPlainText(line)
@@ -751,8 +771,7 @@ class MainWindow(QMainWindow):
         log_view = QPlainTextEdit()
         log_view.setReadOnly(True)
         log_view.setPlainText(text)
-        mono = QFont("monospace")
-        mono.setPointSize(10)
+        mono = _monospace_font(10)
         log_view.setFont(mono)
         dialog_layout.addWidget(log_view)
 
@@ -841,6 +860,11 @@ class MainWindow(QMainWindow):
         if not self._folder:
             return
         self._file_logs = {}
+        for row in range(self._file_table.rowCount()):
+            item = self._file_table.item(row, 2)
+            if item is not None:
+                item.setIcon(QIcon())
+                item.setToolTip("")
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
