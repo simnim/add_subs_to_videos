@@ -85,6 +85,12 @@ def _describe_transcription_error(video_path: Path, exc: Exception) -> str:
     the actual ffmpeg error (e.g. unsupported codec, corrupt file).
     """
     label = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    logging.debug(
+        "transcription error env — LD_LIBRARY_PATH=%s PATH=%s SNAP=%s",
+        os.environ.get("LD_LIBRARY_PATH", "<unset>"),
+        os.environ.get("PATH", "<unset>"),
+        os.environ.get("SNAP", "<unset>"),
+    )
     if not isinstance(exc, subprocess.CalledProcessError):
         return label
     try:
@@ -227,6 +233,12 @@ def process_directory(
             "Install ffmpeg or ensure it is on PATH."
         )
 
+    logging.debug(
+        "startup env — LD_LIBRARY_PATH=%s PATH=%s SNAP=%s",
+        os.environ.get("LD_LIBRARY_PATH", "<unset>"),
+        os.environ.get("PATH", "<unset>"),
+        os.environ.get("SNAP", "<unset>"),
+    )
     logging.info("Loading model '%s'", model_name)
     t_load = time.monotonic()
     with _capture_native_output("whisper.cpp"):

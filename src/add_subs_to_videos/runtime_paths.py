@@ -38,4 +38,8 @@ def ensure_bundled_ffmpeg_on_path() -> None:
 
     snap_dir = os.environ.get("SNAP")
     if snap_dir:
-        _prepend_to_path(Path(snap_dir) / "usr" / "bin")
+        snap_bin = Path(snap_dir) / "usr" / "bin"
+        logging.debug("SNAP=%s; snap bin dir exists=%s", snap_dir, snap_bin.is_dir())
+        _prepend_to_path(snap_bin)
+    else:
+        logging.debug("SNAP env var not set; skipping snap ffmpeg path setup")
