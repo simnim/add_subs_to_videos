@@ -506,6 +506,7 @@ class MainWindow(QMainWindow):
         self._file_row_by_path: dict[Path, int] = {}
         self._path_by_row: dict[int, Path] = {}
         self._file_logs: dict[Path, list[str]] = {}
+        self._open_log_dialogs: dict[Path, QPlainTextEdit] = {}
         self._done_icon = _check_icon(QColor("#2e7d32"))
         self._skipped_icon = _check_icon(QColor("#9e9e9e"))
         self._scroll_icon = _emoji_icon("\U0001F4DC")
@@ -663,6 +664,7 @@ class MainWindow(QMainWindow):
         self._file_row_by_path = {}
         self._path_by_row = {}
         self._file_logs = {}
+        self._open_log_dialogs = {}
         self._scan_message.setText("Scanning…")
         self._scan_message.setVisible(True)
         self._counts_label.setText("")
@@ -716,6 +718,7 @@ class MainWindow(QMainWindow):
         self._file_row_by_path = {}
         self._path_by_row = {}
         self._file_logs = {}
+        self._open_log_dialogs = {}
         self._tree_label.setVisible(False)
         self._scan_message.setVisible(False)
         self._scan_message.setText("")
@@ -726,6 +729,9 @@ class MainWindow(QMainWindow):
     def _on_log_line(self, video: Path | None, line: str) -> None:
         if video is not None:
             self._file_logs.setdefault(video, []).append(line)
+            log_view = self._open_log_dialogs.get(video)
+            if log_view is not None:
+                log_view.appendPlainText(line)
 
     def _on_file_table_cell_clicked(self, row: int, column: int) -> None:
         if column != 2:
@@ -756,6 +762,9 @@ class MainWindow(QMainWindow):
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
         dialog_layout.addLayout(btn_row)
+
+        self._open_log_dialogs[video] = log_view
+        dialog.finished.connect(lambda _r=None, v=video: self._open_log_dialogs.pop(v, None))
 
         dialog.show()
 
