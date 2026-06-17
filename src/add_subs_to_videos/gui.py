@@ -467,6 +467,40 @@ class MainWindow(QMainWindow):
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
+        progress_frame = QFrame()
+        progress_frame.setStyleSheet(
+            "QFrame {"
+            "  border: 1px solid palette(mid);"
+            "  border-radius: 6px;"
+            "}"
+        )
+        progress_layout = QVBoxLayout(progress_frame)
+        progress_layout.setContentsMargins(10, 8, 10, 8)
+        progress_layout.setSpacing(6)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        self._status_label = QLabel("Ready to run")
+        self._status_label.setStyleSheet("color: palette(window-text);")
+        status_row.addWidget(self._status_label, 1)
+        progress_layout.addLayout(status_row)
+
+        self._overall_bar = QProgressBar()
+        self._overall_bar.setRange(0, 1)
+        self._overall_bar.setValue(0)
+        self._overall_bar.setFormat("Ready")
+        self._overall_bar.setMaximumHeight(22)
+        progress_layout.addWidget(self._overall_bar)
+
+        self._file_bar = QProgressBar()
+        self._file_bar.setRange(0, 100)
+        self._file_bar.setValue(0)
+        self._file_bar.setFormat("")
+        self._file_bar.setMaximumHeight(22)
+        progress_layout.addWidget(self._file_bar)
+
+        layout.addWidget(progress_frame)
+
         self._tree_threads: list[_FileScanThread] = []
         self._tree_scan_token = 0
         self._file_row_by_path: dict[Path, int] = {}
@@ -476,10 +510,15 @@ class MainWindow(QMainWindow):
         self._skipped_icon = _check_icon(QColor("#9e9e9e"))
         self._scroll_icon = _emoji_icon("\U0001F4DC")
 
+        tree_header_row = QHBoxLayout()
         self._tree_label = QLabel("Files to process")
         self._tree_label.setStyleSheet(_MUTED_TEXT_STYLE)
         self._tree_label.setVisible(False)
-        layout.addWidget(self._tree_label)
+        tree_header_row.addWidget(self._tree_label, 1)
+        self._counts_label = QLabel("")
+        self._counts_label.setStyleSheet(_MUTED_TEXT_STYLE)
+        tree_header_row.addWidget(self._counts_label)
+        layout.addLayout(tree_header_row)
 
         table_font = QFont("monospace")
         table_font.setPointSize(11)
@@ -565,41 +604,9 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
 
-        status_row = QHBoxLayout()
-        status_row.setSpacing(8)
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: palette(window-text);")
-        status_row.addWidget(self._status_label, 1)
-        self._counts_label = QLabel("")
-        self._counts_label.setStyleSheet(_MUTED_TEXT_STYLE)
-        status_row.addWidget(self._counts_label)
-        layout.addLayout(status_row)
-
-        self._overall_bar = QProgressBar()
-        self._overall_bar.setRange(0, 1)
-        self._overall_bar.setValue(0)
-        self._overall_bar.setFormat("Ready")
-        self._overall_bar.setMaximumHeight(22)
-        layout.addWidget(self._overall_bar)
-
-        self._file_bar = QProgressBar()
-        self._file_bar.setRange(0, 100)
-        self._file_bar.setValue(0)
-        self._file_bar.setFormat("")
-        self._file_bar.setMaximumHeight(22)
-        layout.addWidget(self._file_bar)
-
         self._final_event = None
         self._current_video_index = 0
         self._current_total = 0
-
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setMinimumHeight(200)
-        mono = QFont("monospace")
-        mono.setPointSize(10)
-        self._log.setFont(mono)
-        layout.addWidget(self._log)
 
         self._load_prefs()
 
@@ -712,14 +719,7 @@ class MainWindow(QMainWindow):
         self._file_table.setVisible(False)
         self._file_table.setRowCount(0)
 
-    def _append_log(self, line: str) -> None:
-        self._log.appendPlainText(line)
-        self._log.verticalScrollBar().setValue(
-            self._log.verticalScrollBar().maximum()
-        )
-
     def _on_log_line(self, video: Path | None, line: str) -> None:
-        self._append_log(line)
         if video is not None:
             self._file_logs.setdefault(video, []).append(line)
 
@@ -781,7 +781,6 @@ class MainWindow(QMainWindow):
         name = event.video.name if event.video else ""
         scale = _OVERALL_PROGRESS_SCALE
         if event.stage == "start":
-            self._log.clear()
             self._current_video_index = event.index
             self._current_total = event.total
             self._overall_bar.setRange(0, event.total * scale)
@@ -808,7 +807,7 @@ class MainWindow(QMainWindow):
             self._final_event = event
 
         self._counts_label.setText(
-            f"done {event.done} · skipped {event.skipped} · failed {event.failed}"
+            f"done {event.done}/{event.total} · skipped {event.skipped} · failed {event.failed}"
         )
 
     def _on_file_progress(self, fraction: float) -> None:
@@ -827,7 +826,6 @@ class MainWindow(QMainWindow):
     def _run(self) -> None:
         if not self._folder:
             return
-        self._log.clear()
         self._file_logs = {}
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
@@ -865,7 +863,7 @@ class MainWindow(QMainWindow):
             elapsed_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
             self._status_label.setText("Done" if success else "Finished with errors")
             self._counts_label.setText(
-                f"done {e.done} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
+                f"done {e.done}/{e.total} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
             )
             self._overall_bar.setFormat(
                 f"Complete — {e.done} transcribed, {e.skipped} skipped,"
@@ -879,7 +877,6 @@ class MainWindow(QMainWindow):
             self._overall_bar.setFormat(label)
             self._file_bar.setValue(0)
             self._file_bar.setFormat("")
-        self._append_log("--- Done ---" if success else "--- Finished with errors ---")
 
 
 def _dev_icon_path() -> Path | None:
