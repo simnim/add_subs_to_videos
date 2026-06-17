@@ -665,6 +665,7 @@ class MainWindow(QMainWindow):
         self._file_logs = {}
         self._scan_message.setText("Scanning…")
         self._scan_message.setVisible(True)
+        self._counts_label.setText("")
         thread = _FileScanThread(path)
         thread.files_ready.connect(lambda files, t=token: self._on_tree_ready(t, files))
         self._tree_threads.append(thread)
@@ -682,9 +683,11 @@ class MainWindow(QMainWindow):
                 self._file_table.setVisible(False)
                 self._scan_message.setText("(no video files found)")
                 self._scan_message.setVisible(True)
+                self._counts_label.setText("0 files to process")
                 return
 
             self._scan_message.setVisible(False)
+            self._counts_label.setText(f"{len(files)} file(s) to process")
             self._file_table.setRowCount(len(files))
             self._file_row_by_path = {}
             self._path_by_row = {}
@@ -716,6 +719,7 @@ class MainWindow(QMainWindow):
         self._tree_label.setVisible(False)
         self._scan_message.setVisible(False)
         self._scan_message.setText("")
+        self._counts_label.setText("")
         self._file_table.setVisible(False)
         self._file_table.setRowCount(0)
 
@@ -807,7 +811,8 @@ class MainWindow(QMainWindow):
             self._final_event = event
 
         self._counts_label.setText(
-            f"done {event.done}/{event.total} · skipped {event.skipped} · failed {event.failed}"
+            f"done {event.done + event.skipped}/{event.total}"
+            f" · success {event.done} · skipped {event.skipped} · failed {event.failed}"
         )
 
     def _on_file_progress(self, fraction: float) -> None:
@@ -839,7 +844,8 @@ class MainWindow(QMainWindow):
         self._file_bar.setValue(0)
         self._file_bar.setFormat("")
         self._status_label.setText("Preparing…")
-        self._counts_label.setText("")
+        total = self._file_table.rowCount()
+        self._counts_label.setText(f"{total} file(s) to process")
         lang = self._lang_combo.currentData() or None
         self._worker = _WorkerThread(
             self._folder,
@@ -863,7 +869,8 @@ class MainWindow(QMainWindow):
             elapsed_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
             self._status_label.setText("Done" if success else "Finished with errors")
             self._counts_label.setText(
-                f"done {e.done}/{e.total} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
+                f"done {e.done + e.skipped}/{e.total}"
+                f" · success {e.done} · skipped {e.skipped} · failed {e.failed} · {elapsed_str}"
             )
             self._overall_bar.setFormat(
                 f"Complete — {e.done} transcribed, {e.skipped} skipped,"
