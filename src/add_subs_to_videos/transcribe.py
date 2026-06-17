@@ -241,8 +241,12 @@ def process_directory(
     )
     logging.info("Loading model '%s'", model_name)
     t_load = time.monotonic()
-    with _capture_native_output("whisper.cpp"):
-        model = Model(model_name)
+    try:
+        with _capture_native_output("whisper.cpp"):
+            model = Model(model_name)
+    except Exception as exc:
+        logging.error("Failed to load model '%s': %s", model_name, exc, exc_info=True)
+        sys.exit(1)
     logging.debug("Model '%s' loaded in %.1fs", model_name, time.monotonic() - t_load)
 
     total = len(videos)

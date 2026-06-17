@@ -114,6 +114,26 @@ class TestDropZone:
         dz.dropEvent(_mime_event([f]))
         assert received == []
 
+    def test_drop_with_multiple_urls_uses_first_only(self, dz, tmp_path):
+        first = tmp_path / "clip.mp4"
+        first.touch()
+        second = tmp_path / "other.mkv"
+        second.touch()
+        received = []
+        dz.folder_dropped.connect(received.append)
+        dz.dropEvent(_mime_event([first, second]))
+        assert received == [first]
+
+    def test_drop_with_invalid_first_url_ignores_valid_second(self, dz, tmp_path):
+        invalid = tmp_path / "notes.txt"
+        invalid.touch()
+        valid = tmp_path / "clip.mp4"
+        valid.touch()
+        received = []
+        dz.folder_dropped.connect(received.append)
+        dz.dropEvent(_mime_event([invalid, valid]))
+        assert received == []
+
     def test_browse_emits_signal_on_selection(self, dz, tmp_path):
         received = []
         dz.folder_dropped.connect(received.append)
@@ -491,14 +511,15 @@ class TestMainWindow:
         window._run_btn.setEnabled(False)
         window._on_done(True)
         assert window._run_btn.isEnabled()
-        assert "Done" in window._log.toPlainText()
+        assert "Done" in window._status_label.text()
 
     def test_on_done_false_reenables_run_and_logs_errors(self, window, tmp_path):
         window._drop_zone.folder_dropped.emit(tmp_path)
         window._run_btn.setEnabled(False)
+        window._on_progress(self._event("summary", index=1, total=1, failed=1))
         window._on_done(False)
         assert window._run_btn.isEnabled()
-        assert "errors" in window._log.toPlainText()
+        assert "errors" in window._status_label.text()
 
     @staticmethod
     def _event(stage, index=1, total=10, video=None, **extra):
@@ -555,12 +576,6 @@ class TestMainWindow:
         window._on_progress(self._event("start", index=3, total=10, video=video))
         assert window._file_bar.value() == 0
 
-    def test_progress_start_clears_log(self, window, tmp_path):
-        video = tmp_path / "movie.mp4"
-        window._append_log("[00:00 --> 00:02] leftover from previous video")
-        window._on_progress(self._event("start", index=1, total=10, video=video))
-        assert window._log.toPlainText() == ""
-
     def test_progress_done_advances_overall_bar(self, window, tmp_path):
         video = tmp_path / "movie.mp4"
         window._on_progress(self._event("start", index=3, total=10, video=video))
@@ -603,7 +618,7 @@ class TestMainWindow:
         video = tmp_path / "movie.mp4"
         window._on_progress(self._event("start", index=1, total=2, video=video))
         window._on_progress(self._event("done", index=1, total=2, video=video))
-        window._append_log("leftover from previous run")
+        window._file_logs[video] = ["leftover from previous run"]
 
         window._run()
 
@@ -614,8 +629,8 @@ class TestMainWindow:
         assert window._file_bar.value() == 0
         assert window._file_bar.format() == ""
         assert window._status_label.text() == "Preparing…"
-        assert window._counts_label.text() == ""
-        assert window._log.toPlainText() == ""
+        assert window._counts_label.text() == f"{window._file_table.rowCount()} file(s) to process"
+        assert window._file_logs == {}
 
     def test_cancel_button_disabled_initially(self, window):
         assert not window._cancel_btn.isEnabled()
@@ -742,8 +757,11 @@ class TestMainWindow:
 
         item = window._file_table.item(0, 2)
         assert item is not None
-        assert item.toolTip() == "Click to read logs"
+        assert item.toolTip() == ""
         assert window._path_by_row == {0: video}
+
+        window._on_log_line(video, "[00:00 --> 00:02] hello")
+        assert item.toolTip() == "Click to read logs"
 
     def test_on_log_line_buckets_lines_by_video(self, window, tmp_path):
         video = tmp_path / "movie.mp4"
@@ -751,8 +769,6 @@ class TestMainWindow:
         window._on_log_line(None, "global line")
         window._on_log_line(video, "[00:02 --> 00:04] world")
         assert window._file_logs == {video: ["[00:00 --> 00:02] hello", "[00:02 --> 00:04] world"]}
-        assert "global line" in window._log.toPlainText()
-        assert "hello" in window._log.toPlainText()
 
     def test_clicking_logs_cell_opens_dialog_with_captured_lines(self, window, tmp_video_dir, mocker):
         mocker.patch("add_subs_to_videos.gui._FileScanThread")
@@ -791,7 +807,7 @@ class TestMainWindow:
         from PySide6.QtWidgets import QPlainTextEdit
 
         window._on_file_table_cell_clicked(0, 2)
-        dialogs = [w for w in window.findChildren(QPlainTextEdit) if w is not window._log]
+        dialogs = window.findChildren(QPlainTextEdit)
         assert dialogs
         assert dialogs[-1].toPlainText() == "No logs captured yet."
         dialogs[-1].parent().close()

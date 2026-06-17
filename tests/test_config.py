@@ -162,3 +162,25 @@ class TestSaveConfig:
         cfg_file.parent.mkdir(parents=True)
         cfg_file.write_text('foo = "bar"\nbaz = "qux"\n', encoding="utf-8")
         assert load_config() == {}
+
+    def test_directory_with_double_quote_round_trips(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        directory = '/videos/a "weird" folder'
+        save_config({"directory": directory})
+        assert load_config()["directory"] == directory
+
+    def test_directory_with_backslash_round_trips(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        directory = r"C:\Users\someone\Videos"
+        save_config({"directory": directory})
+        assert load_config()["directory"] == directory
+
+    def test_value_with_newline_round_trips_without_corrupting_other_keys(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        directory = "/videos/weird\nfolder"
+        save_config({"directory": directory, "model": "small"})
+        result = load_config()
+        assert result["directory"] == directory
+        assert result["model"] == "small"

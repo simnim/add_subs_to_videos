@@ -51,6 +51,15 @@ class TestFormatSrtTimestamp:
     def test_near_minute_boundary(self):
         assert format_srt_timestamp(59.999) == "00:00:59,999"
 
+    def test_over_99_hours_not_truncated(self):
+        # 100 hours, no wraparound or digit truncation in the hour field
+        assert format_srt_timestamp(360000.0) == "100:00:00,000"
+
+    def test_negative_seconds_current_behavior(self):
+        # Not a supported input (segments are never negative in practice), but
+        # pinned down so a future change to this is a deliberate decision.
+        assert format_srt_timestamp(-1.5) == "-1:59:58,500"
+
 
 class TestFormatLogTimestamp:
     def test_zero(self):
@@ -306,6 +315,20 @@ class TestFindVideos:
         videos = find_videos(tmp_path)
         assert len(videos) == len(VIDEO_EXTENSIONS)
 
+    def test_symlinked_subdirectory_is_not_traversed(self, tmp_path):
+        # pathlib's rglob does not descend into symlinked directories by
+        # default (Python 3.13+); pin this down since it affects discovery.
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        (real_dir / "linked.mp4").touch()
+        root = tmp_path / "root"
+        root.mkdir()
+        try:
+            (root / "link").symlink_to(real_dir, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform")
+        assert not any(p.name == "linked.mp4" for p in find_videos(root))
+
 
 # ---------------------------------------------------------------------------
 # format_size_mb
@@ -558,6 +581,17 @@ class TestCaptureNativeOutput:
             os.write(1, b"after capture\n")
 
         assert "after capture" in capfd.readouterr().out
+
+    def test_restores_fds_when_body_raises(self, caplog, capfd):
+        import os
+
+        with caplog.at_level("DEBUG", logger="root"):
+            with pytest.raises(ValueError):
+                with _capture_native_output("whisper.cpp"):
+                    raise ValueError("boom")
+            os.write(1, b"after raise\n")
+
+        assert "after raise" in capfd.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +938,18 @@ class TestProcessDirectory:
             process_directory(tmp_path, **_COMMON_KWARGS)
 
         assert exc_info.value.code == 1
+
+    def test_model_load_failure_exits_1_with_clean_error(self, tmp_path, mock_transcribe, caplog):
+        (tmp_path / "clip.mp4").touch()
+        mock_transcribe.model_cls.side_effect = RuntimeError("model not found")
+
+        with caplog.at_level("ERROR"):
+            with pytest.raises(SystemExit) as exc_info:
+                process_directory(tmp_path, **_COMMON_KWARGS)
+
+        assert exc_info.value.code == 1
+        assert "model not found" in caplog.text
+        mock_transcribe.model.transcribe.assert_not_called()
 
     def test_called_process_error_uses_ffmpeg_diagnostic(self, tmp_path, mock_transcribe, mocker, caplog):
         import subprocess

@@ -6,6 +6,18 @@ from pathlib import Path
 
 _KEYS = frozenset({"model", "language", "directory"})
 
+_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+}
+
+
+def _escape_toml_basic_string(value: str) -> str:
+    return "".join(_ESCAPES.get(c, c) for c in value)
+
 
 def config_path() -> Path:
     base = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
@@ -28,6 +40,6 @@ def save_config(updates: dict) -> None:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(f'{k} = "{current[k]}"\n' for k in sorted(current)),
+        "".join(f'{k} = "{_escape_toml_basic_string(current[k])}"\n' for k in sorted(current)),
         encoding="utf-8",
     )
