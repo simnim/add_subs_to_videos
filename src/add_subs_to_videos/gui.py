@@ -4,6 +4,7 @@ import logging
 import sys
 import threading
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QPoint, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -63,6 +65,20 @@ def _check_icon(color: QColor) -> QIcon:
     painter.end()
     return QIcon(pixmap)
 
+
+def _emoji_icon(emoji: str, size: int = 16) -> QIcon:
+    """Render a single emoji glyph as a centered QIcon."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    font = painter.font()
+    font.setPointSize(int(size * 0.75))
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+    painter.end()
+    return QIcon(pixmap)
+
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
 _LANGUAGES: list[tuple[str, str]] = [
@@ -94,13 +110,22 @@ _LANGUAGES: list[tuple[str, str]] = [
 ]
 
 
+class _CurrentVideo:
+    """Mutable holder for the video currently being processed, shared across
+    the log handler, stdout capture, and segment callback inside one worker run."""
+
+    def __init__(self) -> None:
+        self.value: Path | None = None
+
+
 class _QtLogHandler(logging.Handler):
-    def __init__(self, signal: Signal):
+    def __init__(self, signal: Signal, current_video: Callable[[], Path | None]):
         super().__init__()
         self._signal = signal
+        self._current_video = current_video
 
     def emit(self, record: logging.LogRecord) -> None:
-        self._signal.emit(self.format(record))
+        self._signal.emit(self._current_video(), self.format(record))
 
 
 class DropZone(QFrame):
@@ -299,7 +324,7 @@ class _FileScanThread(QThread):
 
 
 class _WorkerThread(QThread):
-    log_line = Signal(str)
+    log_line = Signal(object, str)
     progress = Signal(object)
     file_progress = Signal(float)
     finished_run = Signal(bool)
@@ -322,7 +347,9 @@ class _WorkerThread(QThread):
         self._cancel.set()
 
     def run(self) -> None:
-        handler = _QtLogHandler(self.log_line)
+        current = _CurrentVideo()
+
+        handler = _QtLogHandler(self.log_line, lambda: current.value)
         handler.setFormatter(logging.Formatter("%(levelname)-8s %(message)s"))
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
@@ -330,18 +357,29 @@ class _WorkerThread(QThread):
         root_logger.setLevel(logging.INFO)
 
         class _StdoutCapture:
-            def __init__(self, sig: Signal) -> None:
+            def __init__(self, sig: Signal, current_video: Callable[[], Path | None]) -> None:
                 self._sig = sig
+                self._current_video = current_video
 
             def write(self, text: str) -> None:
                 if text.strip():
-                    self._sig.emit(text.rstrip())
+                    self._sig.emit(self._current_video(), text.rstrip())
 
             def flush(self) -> None:
                 pass
 
         saved_stdout = sys.stdout
-        sys.stdout = _StdoutCapture(self.log_line)  # type: ignore[assignment]
+        sys.stdout = _StdoutCapture(self.log_line, lambda: current.value)  # type: ignore[assignment]
+
+        def _on_progress(event) -> None:
+            if event.stage == "start":
+                current.value = event.video
+            self.progress.emit(event)
+            if event.stage in ("done", "skip", "fail"):
+                current.value = None
+
+        def _on_segment(text: str) -> None:
+            self.log_line.emit(current.value, text)
 
         success = True
         try:
@@ -352,8 +390,8 @@ class _WorkerThread(QThread):
                 force=self._force,
                 show_progress=False,
                 cancel=self._cancel,
-                on_progress=self.progress.emit,
-                on_segment=self.log_line.emit,
+                on_progress=_on_progress,
+                on_segment=_on_segment,
                 on_file_progress=self.file_progress.emit,
             )
         except SystemExit as exc:
@@ -432,8 +470,11 @@ class MainWindow(QMainWindow):
         self._tree_threads: list[_FileScanThread] = []
         self._tree_scan_token = 0
         self._file_row_by_path: dict[Path, int] = {}
+        self._path_by_row: dict[int, Path] = {}
+        self._file_logs: dict[Path, list[str]] = {}
         self._done_icon = _check_icon(QColor("#2e7d32"))
         self._skipped_icon = _check_icon(QColor("#9e9e9e"))
+        self._scroll_icon = _emoji_icon("\U0001F4DC")
 
         self._tree_label = QLabel("Files to process")
         self._tree_label.setStyleSheet(_MUTED_TEXT_STYLE)
@@ -450,17 +491,19 @@ class MainWindow(QMainWindow):
         self._scan_message.setVisible(False)
         layout.addWidget(self._scan_message)
 
-        self._file_table = QTableWidget(0, 2)
-        self._file_table.setHorizontalHeaderLabels(["File", "Status"])
+        self._file_table = QTableWidget(0, 3)
+        self._file_table.setHorizontalHeaderLabels(["File", "Status", "Logs"])
         self._file_table.setFont(table_font)
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
+        self._file_table.cellClicked.connect(self._on_file_table_cell_clicked)
         header = self._file_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._file_table.setStyleSheet(
             "QTableWidget {"
             "  border: 1px solid palette(mid);"
@@ -611,6 +654,8 @@ class MainWindow(QMainWindow):
         self._file_table.setVisible(False)
         self._file_table.setRowCount(0)
         self._file_row_by_path = {}
+        self._path_by_row = {}
+        self._file_logs = {}
         self._scan_message.setText("Scanning…")
         self._scan_message.setVisible(True)
         thread = _FileScanThread(path)
@@ -626,6 +671,7 @@ class MainWindow(QMainWindow):
             if not files:
                 self._file_table.setRowCount(0)
                 self._file_row_by_path = {}
+                self._path_by_row = {}
                 self._file_table.setVisible(False)
                 self._scan_message.setText("(no video files found)")
                 self._scan_message.setVisible(True)
@@ -634,6 +680,7 @@ class MainWindow(QMainWindow):
             self._scan_message.setVisible(False)
             self._file_table.setRowCount(len(files))
             self._file_row_by_path = {}
+            self._path_by_row = {}
             for row, path in enumerate(files):
                 display = path.name
                 if self._folder is not None and self._folder.is_dir():
@@ -643,7 +690,13 @@ class MainWindow(QMainWindow):
                         pass
                 self._file_table.setItem(row, 0, QTableWidgetItem(display))
                 self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
+                logs_item = QTableWidgetItem()
+                logs_item.setIcon(self._scroll_icon)
+                logs_item.setToolTip("Click to read logs")
+                logs_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._file_table.setItem(row, 2, logs_item)
                 self._file_row_by_path[path] = row
+                self._path_by_row[row] = path
             self._file_table.setVisible(True)
         except RuntimeError:
             pass  # widget was destroyed (e.g. window closed) before the scan finished
@@ -651,6 +704,8 @@ class MainWindow(QMainWindow):
     def _clear_tree_view(self) -> None:
         self._tree_scan_token += 1
         self._file_row_by_path = {}
+        self._path_by_row = {}
+        self._file_logs = {}
         self._tree_label.setVisible(False)
         self._scan_message.setVisible(False)
         self._scan_message.setText("")
@@ -662,6 +717,43 @@ class MainWindow(QMainWindow):
         self._log.verticalScrollBar().setValue(
             self._log.verticalScrollBar().maximum()
         )
+
+    def _on_log_line(self, video: Path | None, line: str) -> None:
+        self._append_log(line)
+        if video is not None:
+            self._file_logs.setdefault(video, []).append(line)
+
+    def _on_file_table_cell_clicked(self, row: int, column: int) -> None:
+        if column != 2:
+            return
+        video = self._path_by_row.get(row)
+        if video is None:
+            return
+        lines = self._file_logs.get(video)
+        text = "\n".join(lines) if lines else "No logs captured yet."
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Logs — {video.name}")
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.resize(640, 400)
+
+        dialog_layout = QVBoxLayout(dialog)
+        log_view = QPlainTextEdit()
+        log_view.setReadOnly(True)
+        log_view.setPlainText(text)
+        mono = QFont("monospace")
+        mono.setPointSize(10)
+        log_view.setFont(mono)
+        dialog_layout.addWidget(log_view)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        dialog_layout.addLayout(btn_row)
+
+        dialog.show()
 
     def _update_file_status(self, video: Path | None, status: str) -> None:
         if video is None:
@@ -736,6 +828,7 @@ class MainWindow(QMainWindow):
         if not self._folder:
             return
         self._log.clear()
+        self._file_logs = {}
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
@@ -756,7 +849,7 @@ class MainWindow(QMainWindow):
             lang,
             self._force_check.isChecked(),
         )
-        self._worker.log_line.connect(self._append_log)
+        self._worker.log_line.connect(self._on_log_line)
         self._worker.progress.connect(self._on_progress)
         self._worker.file_progress.connect(self._on_file_progress)
         self._worker.finished_run.connect(self._on_done)

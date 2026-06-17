@@ -217,7 +217,7 @@ class TestWorkerThread:
 
     def test_segment_line_emitted_from_on_segment_callback(self, thread, mock_pd):
         lines = []
-        thread.log_line.connect(lines.append)
+        thread.log_line.connect(lambda v, l: lines.append(l))
 
         def fake_process_directory(*args, **kwargs):
             kwargs["on_segment"]("[00:00 --> 00:02] hello")
@@ -225,6 +225,42 @@ class TestWorkerThread:
         mock_pd.side_effect = fake_process_directory
         thread.run()
         assert lines == ["[00:00 --> 00:02] hello"]
+
+    def test_segment_line_attributed_to_current_video(self, thread, mock_pd, tmp_path):
+        video = tmp_path / "movie.mp4"
+        received = []
+        thread.log_line.connect(lambda v, l: received.append((v, l)))
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_progress"](
+                ProgressEvent(stage="start", index=1, total=1, video=video, done=0, skipped=0, failed=0)
+            )
+            kwargs["on_segment"]("[00:00 --> 00:02] hello")
+            kwargs["on_progress"](
+                ProgressEvent(stage="done", index=1, total=1, video=video, done=1, skipped=0, failed=0)
+            )
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert received == [(video, "[00:00 --> 00:02] hello")]
+
+    def test_log_line_has_no_video_after_file_finishes(self, thread, mock_pd, tmp_path):
+        video = tmp_path / "movie.mp4"
+        received = []
+        thread.log_line.connect(lambda v, l: received.append((v, l)))
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_progress"](
+                ProgressEvent(stage="start", index=1, total=1, video=video, done=0, skipped=0, failed=0)
+            )
+            kwargs["on_progress"](
+                ProgressEvent(stage="done", index=1, total=1, video=video, done=1, skipped=0, failed=0)
+            )
+            print("Summary: 1 transcribed")
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert received == [(None, "Summary: 1 transcribed")]
 
     def test_file_progress_emitted_from_on_file_progress_callback(self, thread, mock_pd):
         fractions = []
@@ -266,7 +302,7 @@ class TestWorkerThread:
         mock_pd.side_effect = RuntimeError("model load failed")
         lines = []
         results = []
-        thread.log_line.connect(lines.append)
+        thread.log_line.connect(lambda v, l: lines.append(l))
         thread.finished_run.connect(results.append)
         thread.run()
 
@@ -287,7 +323,7 @@ class TestWorkerThread:
             logging.getLogger().info("hello from transcribe")
         mock_pd.side_effect = _emit_log
         lines = []
-        thread.log_line.connect(lines.append)
+        thread.log_line.connect(lambda v, l: lines.append(l))
         thread.run()
         assert any("hello from transcribe" in line for line in lines)
 
@@ -296,7 +332,7 @@ class TestWorkerThread:
             print("Summary: 1 transcribed")
         mock_pd.side_effect = _print_summary
         lines = []
-        thread.log_line.connect(lines.append)
+        thread.log_line.connect(lambda v, l: lines.append(l))
         thread.run()
         assert any("Summary" in line for line in lines)
 
@@ -308,7 +344,7 @@ class TestWorkerThread:
 
         mock_pd.side_effect = _print_lines
         lines = []
-        thread.log_line.connect(lines.append)
+        thread.log_line.connect(lambda v, l: lines.append(l))
         thread.run()
         assert lines == ["Summary: 1 transcribed"]
 
@@ -696,6 +732,89 @@ class TestMainWindow:
 
         window._on_progress(ProgressEvent(stage="done", index=1, total=1, video=video, done=1, skipped=0, failed=0))
         assert window._file_table.item(0, 1).text() == "Done"
+
+    def test_tree_ready_adds_logs_column_with_tooltip(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        video = tmp_video_dir / "movie.mp4"
+        window._on_tree_ready(token, [video])
+
+        item = window._file_table.item(0, 2)
+        assert item is not None
+        assert item.toolTip() == "Click to read logs"
+        assert window._path_by_row == {0: video}
+
+    def test_on_log_line_buckets_lines_by_video(self, window, tmp_path):
+        video = tmp_path / "movie.mp4"
+        window._on_log_line(video, "[00:00 --> 00:02] hello")
+        window._on_log_line(None, "global line")
+        window._on_log_line(video, "[00:02 --> 00:04] world")
+        assert window._file_logs == {video: ["[00:00 --> 00:02] hello", "[00:02 --> 00:04] world"]}
+        assert "global line" in window._log.toPlainText()
+        assert "hello" in window._log.toPlainText()
+
+    def test_clicking_logs_cell_opens_dialog_with_captured_lines(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        video = tmp_video_dir / "movie.mp4"
+        window._on_tree_ready(token, [video])
+        window._on_log_line(video, "[00:00 --> 00:02] hello")
+
+        from PySide6.QtWidgets import QDialog, QPlainTextEdit
+
+        created = []
+        original_init = QDialog.__init__
+
+        def capture_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            created.append(self)
+
+        mocker.patch.object(QDialog, "__init__", capture_init)
+        window._on_file_table_cell_clicked(0, 2)
+
+        assert len(created) == 1
+        dialog = created[0]
+        assert video.name in dialog.windowTitle()
+        text_edit = dialog.findChild(QPlainTextEdit)
+        assert "[00:00 --> 00:02] hello" in text_edit.toPlainText()
+        dialog.close()
+
+    def test_clicking_logs_cell_with_no_logs_shows_placeholder(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        video = tmp_video_dir / "movie.mp4"
+        window._on_tree_ready(token, [video])
+
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        window._on_file_table_cell_clicked(0, 2)
+        dialogs = [w for w in window.findChildren(QPlainTextEdit) if w is not window._log]
+        assert dialogs
+        assert dialogs[-1].toPlainText() == "No logs captured yet."
+        dialogs[-1].parent().close()
+
+    def test_clicking_non_logs_column_does_nothing(self, window, tmp_video_dir, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_video_dir)
+        token = window._tree_scan_token
+        video = tmp_video_dir / "movie.mp4"
+        window._on_tree_ready(token, [video])
+
+        from PySide6.QtWidgets import QDialog
+
+        before = len(window.findChildren(QDialog))
+        window._on_file_table_cell_clicked(0, 0)
+        assert len(window.findChildren(QDialog)) == before
+
+    def test_run_clears_file_logs(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._file_logs[tmp_path / "old.mp4"] = ["stale"]
+        window._run()
+        assert window._file_logs == {}
 
 
 # ---------------------------------------------------------------------------
