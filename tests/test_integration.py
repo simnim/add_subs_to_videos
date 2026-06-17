@@ -1,6 +1,6 @@
 """
-Integration test: downloads a real Wikipedia spoken-article audio file and
-runs the full add_subs_to_videos pipeline end-to-end (transcription only).
+Integration test: runs the full add_subs_to_videos pipeline end-to-end
+(transcription only) against a bundled Wikipedia spoken-article audio file.
 
 Run with:
     uv run pytest tests/test_integration.py -v -s
@@ -13,14 +13,14 @@ License: CC BY-SA 4.0
 from __future__ import annotations
 
 import re
-import urllib.request
+import shutil
 from pathlib import Path
 
 import pytest
 
 from add_subs_to_videos.transcribe import process_directory
 
-AUDIO_URL = "https://upload.wikimedia.org/wikipedia/commons/4/48/En-.fun-article.ogg"
+AUDIO_SOURCE = Path(__file__).parent / "demo-audio" / "wiki-example-audio.ogg"
 # Saved with a .mp4 extension so find_videos() picks it up; ffmpeg probes the
 # actual container format and doesn't care about the file extension.
 AUDIO_FILENAME = "wikipedia_fun_article.mp4"
@@ -28,17 +28,10 @@ AUDIO_FILENAME = "wikipedia_fun_article.mp4"
 
 @pytest.fixture(scope="module")
 def downloaded_audio(tmp_path_factory):
-    """Download the Wikipedia audio once per module."""
+    """Copy the bundled Wikipedia audio into a temp dir once per module."""
     dest = tmp_path_factory.mktemp("audio") / AUDIO_FILENAME
-    print(f"\nDownloading {AUDIO_URL} ...")
-    # Wikimedia requires a descriptive User-Agent; bare urllib gets a 403.
-    req = urllib.request.Request(
-        AUDIO_URL,
-        headers={"User-Agent": "add-subs-to-videos-integration-test/1.0"},
-    )
-    with urllib.request.urlopen(req) as response:
-        dest.write_bytes(response.read())
-    assert dest.stat().st_size > 0, "Downloaded file is empty"
+    shutil.copyfile(AUDIO_SOURCE, dest)
+    assert dest.stat().st_size > 0, "Copied file is empty"
     return dest
 
 
