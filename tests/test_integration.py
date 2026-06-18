@@ -42,7 +42,7 @@ def test_srt_file_is_created(downloaded_audio):
     srt_path = downloaded_audio.with_suffix(".srt")
     srt_path.unlink(missing_ok=True)
 
-    process_directory(video_dir, model_name="tiny", language="en", force=True)
+    process_directory(video_dir, model_name="tiny", language="en", force=True, n_threads=1)
 
     assert srt_path.exists(), ".srt file was not created"
 
@@ -53,7 +53,7 @@ def test_srt_content_is_valid(downloaded_audio):
     srt_path = downloaded_audio.with_suffix(".srt")
     if not srt_path.exists():
         process_directory(
-            downloaded_audio.parent, model_name="tiny", language="en", force=True
+            downloaded_audio.parent, model_name="tiny", language="en", force=True, n_threads=1
         )
 
     content = srt_path.read_text(encoding="utf-8")
@@ -74,7 +74,7 @@ def test_skip_logic_honours_existing_srt(downloaded_audio):
     srt_path.write_text("sentinel content", encoding="utf-8")
 
     process_directory(
-        downloaded_audio.parent, model_name="tiny", language="en", force=False
+        downloaded_audio.parent, model_name="tiny", language="en", force=False, n_threads=1
     )
 
     assert srt_path.read_text(encoding="utf-8") == "sentinel content"

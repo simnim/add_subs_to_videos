@@ -173,8 +173,11 @@ def transcribe_video(
     on_segment: Callable[[str], None] | None = None,
     on_file_progress: Callable[[float], None] | None = None,
     duration: float | None = None,
+    n_threads: int | None = None,
 ) -> str:
     extra: dict = {}
+    if n_threads is not None:
+        extra["n_threads"] = n_threads
     if cancel is not None or on_segment is not None or on_file_progress is not None:
         if on_file_progress is not None and duration is None:
             duration = _probe_duration(video_path)
@@ -220,6 +223,7 @@ def process_directory(
     on_progress: Callable[[ProgressEvent], None] | None = None,
     on_segment: Callable[[str], None] | None = None,
     on_file_progress: Callable[[float], None] | None = None,
+    n_threads: int | None = None,
 ) -> None:
     videos = find_videos(root)
     if not videos:
@@ -334,6 +338,7 @@ def process_directory(
                     on_segment=on_segment,
                     on_file_progress=_file_progress,
                     duration=duration,
+                    n_threads=n_threads,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
                 logging.info(
