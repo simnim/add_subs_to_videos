@@ -219,7 +219,7 @@ class TestWorkerThread:
 
     @pytest.fixture
     def thread(self, tmp_path, qapp):
-        return _WorkerThread(tmp_path, "medium", None, False)
+        return _WorkerThread(tmp_path, "medium", None, False, False)
 
     def test_calls_process_directory_with_correct_args(self, thread, mock_pd, tmp_path):
         thread.run()
@@ -294,7 +294,7 @@ class TestWorkerThread:
         assert fractions == [0.5]
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
-        thread = _WorkerThread(tmp_path, "small", "fr", False)
+        thread = _WorkerThread(tmp_path, "small", "fr", False, False)
         thread.run()
         assert mock_pd.call_args.kwargs["language"] == "fr"
 
@@ -387,7 +387,7 @@ class TestWorkerThread:
             received_cancel["event"] = cancel
 
         mocker.patch("add_subs_to_videos.gui.process_directory", side_effect=capture_cancel)
-        thread = _WorkerThread(tmp_path, "medium", None, False)
+        thread = _WorkerThread(tmp_path, "medium", None, False, False)
         thread.run()
         assert isinstance(received_cancel["event"], threading.Event)
 
@@ -505,6 +505,28 @@ class TestMainWindow:
         mock_save = mocker.patch("add_subs_to_videos.gui.save_config")
         window.close()
         mock_save.assert_called()
+
+    def test_close_event_cancels_and_waits_for_running_worker(self, mocker, window):
+        mock_worker = mocker.MagicMock()
+        mock_worker.isRunning.return_value = True
+        window._worker = mock_worker
+        window.close()
+        mock_worker.cancel.assert_called_once()
+        mock_worker.wait.assert_called_once()
+
+    def test_close_event_leaves_idle_worker_alone(self, mocker, window):
+        mock_worker = mocker.MagicMock()
+        mock_worker.isRunning.return_value = False
+        window._worker = mock_worker
+        window.close()
+        mock_worker.cancel.assert_not_called()
+        mock_worker.wait.assert_not_called()
+
+    def test_close_event_waits_for_pending_tree_scan_threads(self, mocker, window):
+        mock_thread = mocker.MagicMock()
+        window._tree_threads.append(mock_thread)
+        window.close()
+        mock_thread.wait.assert_called_once()
 
     def test_on_done_true_reenables_run_and_logs_done(self, window, tmp_path):
         window._drop_zone.folder_dropped.emit(tmp_path)

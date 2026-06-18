@@ -350,12 +350,14 @@ class _WorkerThread(QThread):
         model_name: str,
         language: str | None,
         force: bool,
+        debug: bool,
     ) -> None:
         super().__init__()
         self._root = root
         self._model_name = model_name
         self._language = language
         self._force = force
+        self._debug = debug
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -369,7 +371,7 @@ class _WorkerThread(QThread):
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         saved_level = root_logger.level
-        root_logger.setLevel(logging.INFO)
+        root_logger.setLevel(logging.DEBUG if self._debug else logging.INFO)
 
         class _StdoutCapture:
             def __init__(self, sig: Signal, current_video: Callable[[], Path | None]) -> None:
@@ -601,6 +603,8 @@ class MainWindow(QMainWindow):
         opts.addSpacing(16)
         self._force_check = QCheckBox("Force re-run")
         opts.addWidget(self._force_check)
+        self._debug_check = QCheckBox("Debug logging")
+        opts.addWidget(self._debug_check)
         opts.addStretch()
         layout.addLayout(opts)
 
@@ -648,7 +652,15 @@ class MainWindow(QMainWindow):
             "directory": str(self._folder) if self._folder else "",
         })
 
+    def _shutdown_threads(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait()
+        for thread in list(self._tree_threads):
+            thread.wait()
+
     def closeEvent(self, event) -> None:
+        self._shutdown_threads()
         self._save_prefs()
         super().closeEvent(event)
 
@@ -885,6 +897,7 @@ class MainWindow(QMainWindow):
             self._model_combo.currentText(),
             lang,
             self._force_check.isChecked(),
+            self._debug_check.isChecked(),
         )
         self._worker.log_line.connect(self._on_log_line)
         self._worker.progress.connect(self._on_progress)
