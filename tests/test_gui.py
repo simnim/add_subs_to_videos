@@ -219,7 +219,7 @@ class TestWorkerThread:
 
     @pytest.fixture
     def thread(self, tmp_path, qapp):
-        return _WorkerThread(tmp_path, "medium", None, False, False)
+        return _WorkerThread(tmp_path, "medium", None, False, False, 4)
 
     def test_calls_process_directory_with_correct_args(self, thread, mock_pd, tmp_path):
         thread.run()
@@ -233,6 +233,7 @@ class TestWorkerThread:
             on_progress=ANY,
             on_segment=ANY,
             on_file_progress=ANY,
+            n_threads=4,
         )
 
     def test_segment_line_emitted_from_on_segment_callback(self, thread, mock_pd):
@@ -294,7 +295,7 @@ class TestWorkerThread:
         assert fractions == [0.5]
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
-        thread = _WorkerThread(tmp_path, "small", "fr", False, False)
+        thread = _WorkerThread(tmp_path, "small", "fr", False, False, 4)
         thread.run()
         assert mock_pd.call_args.kwargs["language"] == "fr"
 
@@ -387,7 +388,7 @@ class TestWorkerThread:
             received_cancel["event"] = cancel
 
         mocker.patch("add_subs_to_videos.gui.process_directory", side_effect=capture_cancel)
-        thread = _WorkerThread(tmp_path, "medium", None, False, False)
+        thread = _WorkerThread(tmp_path, "medium", None, False, False, 4)
         thread.run()
         assert isinstance(received_cancel["event"], threading.Event)
 
@@ -427,6 +428,7 @@ class TestMainWindow:
             "model": window._model_combo.currentText(),
             "language": window._lang_combo.currentData(),
             "directory": str(tmp_path),
+            "threads": window._threads_spin.value(),
         })
 
     def test_folder_dropped_shows_clear_button(self, window, tmp_path):
@@ -451,6 +453,7 @@ class TestMainWindow:
             "model": window._model_combo.currentText(),
             "language": window._lang_combo.currentData() or "",
             "directory": "",
+            "threads": window._threads_spin.value(),
         })
 
     def test_clear_button_hidden_initially(self, window):
@@ -494,12 +497,33 @@ class TestMainWindow:
         window._folder = tmp_path
         window._model_combo.setCurrentText("tiny")
         window._lang_combo.setCurrentIndex(window._lang_combo.findData("fr"))
+        window._threads_spin.setValue(2)
         window._save_prefs()
         mock_save.assert_called_once_with({
             "model": "tiny",
             "language": "fr",
             "directory": str(tmp_path),
+            "threads": 2,
         })
+
+    def test_load_prefs_sets_threads(self, mocker, qtbot):
+        mocker.patch("add_subs_to_videos.gui.load_config", return_value={"threads": 2})
+        w = MainWindow()
+        qtbot.addWidget(w)
+        assert w._threads_spin.value() == 2
+
+    def test_load_prefs_defaults_threads_to_cpu_count(self, mocker, qtbot):
+        mocker.patch("add_subs_to_videos.gui.load_config", return_value={})
+        mocker.patch("add_subs_to_videos.gui.default_n_threads", return_value=6)
+        w = MainWindow()
+        qtbot.addWidget(w)
+        assert w._threads_spin.value() == 6
+
+    def test_threads_spin_max_is_capped_to_core_count(self, mocker, qtbot):
+        mocker.patch("add_subs_to_videos.gui.default_n_threads", return_value=6)
+        w = MainWindow()
+        qtbot.addWidget(w)
+        assert w._threads_spin.maximum() == 6
 
     def test_close_event_triggers_save(self, mocker, window):
         mock_save = mocker.patch("add_subs_to_videos.gui.save_config")

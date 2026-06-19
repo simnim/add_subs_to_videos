@@ -37,6 +37,11 @@ class ProgressEvent:
     elapsed: float | None = None
 
 
+def default_n_threads() -> int:
+    """Best-effort thread count for whisper.cpp: all detected CPU cores."""
+    return os.cpu_count() or 4
+
+
 def _raw_to_dicts(raw_segments) -> list[dict]:
     return [
         {"start": seg.t0 / 100.0, "end": seg.t1 / 100.0, "text": seg.text.strip()}
@@ -243,6 +248,16 @@ def process_directory(
         os.environ.get("PATH", "<unset>"),
         os.environ.get("SNAP", "<unset>"),
     )
+    effective_threads = n_threads if n_threads is not None else default_n_threads()
+    max_threads = default_n_threads()
+    if effective_threads > max_threads:
+        logging.warning(
+            "Requested %d thread(s), but only %d core(s) detected — capping",
+            effective_threads, max_threads,
+        )
+        effective_threads = max_threads
+    logging.debug("Using %d thread(s) for transcription", effective_threads)
+
     logging.info("Loading model '%s'", model_name)
     t_load = time.monotonic()
     try:
@@ -338,7 +353,7 @@ def process_directory(
                     on_segment=on_segment,
                     on_file_progress=_file_progress,
                     duration=duration,
-                    n_threads=n_threads,
+                    n_threads=effective_threads,
                 )
                 srt_path.write_text(srt_content, encoding="utf-8")
                 logging.info(

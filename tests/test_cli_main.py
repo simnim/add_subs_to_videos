@@ -96,6 +96,25 @@ class TestMainLanguageHandling:
         assert mock_pd.call_args.kwargs["language"] == "en"
 
 
+class TestMainThreadsHandling:
+    def test_default_threads_is_none(self, tmp_path, mocker, mock_pd, no_config):
+        mocker.patch("sys.argv", ["prog", str(tmp_path)])
+        main()
+        assert mock_pd.call_args.kwargs["n_threads"] is None
+
+    def test_config_threads_used(self, tmp_path, mocker, mock_pd):
+        mocker.patch("sys.argv", ["prog", str(tmp_path)])
+        mocker.patch("add_subs_to_videos.cli.load_config", return_value={"threads": 2})
+        main()
+        assert mock_pd.call_args.kwargs["n_threads"] == 2
+
+    def test_cli_threads_beats_config(self, tmp_path, mocker, mock_pd):
+        mocker.patch("sys.argv", ["prog", str(tmp_path), "--threads", "8"])
+        mocker.patch("add_subs_to_videos.cli.load_config", return_value={"threads": 2})
+        main()
+        assert mock_pd.call_args.kwargs["n_threads"] == 8
+
+
 class TestMainFlags:
     def test_force_defaults_false(self, tmp_path, mocker, mock_pd, no_config):
         mocker.patch("sys.argv", ["prog", str(tmp_path)])

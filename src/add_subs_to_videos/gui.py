@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -41,7 +42,7 @@ from PySide6.QtWidgets import (
 from .config import load_config, save_config
 from .files import VIDEO_EXTENSIONS, find_videos
 from .runtime_paths import ensure_bundled_ffmpeg_on_path
-from .transcribe import process_directory
+from .transcribe import default_n_threads, process_directory
 
 # QProgressBar values are integers, so the overall bar's range is scaled up by
 # this factor to give smooth sub-file resolution when combining the count of
@@ -351,6 +352,7 @@ class _WorkerThread(QThread):
         language: str | None,
         force: bool,
         debug: bool,
+        threads: int,
     ) -> None:
         super().__init__()
         self._root = root
@@ -358,6 +360,7 @@ class _WorkerThread(QThread):
         self._language = language
         self._force = force
         self._debug = debug
+        self._threads = threads
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -410,6 +413,7 @@ class _WorkerThread(QThread):
                 on_progress=_on_progress,
                 on_segment=_on_segment,
                 on_file_progress=self.file_progress.emit,
+                n_threads=self._threads,
             )
         except SystemExit as exc:
             success = exc.code in (0, None)
@@ -601,6 +605,12 @@ class MainWindow(QMainWindow):
         self._lang_combo.setMinimumWidth(160)
         opts.addWidget(self._lang_combo)
         opts.addSpacing(16)
+        opts.addWidget(QLabel("Threads:"))
+        self._threads_spin = QSpinBox()
+        self._threads_spin.setRange(1, default_n_threads())
+        self._threads_spin.setValue(default_n_threads())
+        opts.addWidget(self._threads_spin)
+        opts.addSpacing(16)
         self._force_check = QCheckBox("Force re-run")
         opts.addWidget(self._force_check)
         self._debug_check = QCheckBox("Debug logging")
@@ -635,6 +645,7 @@ class MainWindow(QMainWindow):
         saved_lang = cfg.get("language", "")
         idx = self._lang_combo.findData(saved_lang)
         self._lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._threads_spin.setValue(cfg.get("threads", default_n_threads()))
         directory = cfg.get("directory", "")
         if directory and Path(directory).exists():
             path = Path(directory)
@@ -650,6 +661,7 @@ class MainWindow(QMainWindow):
             "model": self._model_combo.currentText(),
             "language": self._lang_combo.currentData() or "",
             "directory": str(self._folder) if self._folder else "",
+            "threads": self._threads_spin.value(),
         })
 
     def _shutdown_threads(self) -> None:
@@ -898,6 +910,7 @@ class MainWindow(QMainWindow):
             lang,
             self._force_check.isChecked(),
             self._debug_check.isChecked(),
+            self._threads_spin.value(),
         )
         self._worker.log_line.connect(self._on_log_line)
         self._worker.progress.connect(self._on_progress)

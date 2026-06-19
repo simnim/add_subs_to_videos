@@ -27,6 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LANG",
         help="Language code to pin (e.g. 'en'). Auto-detects if omitted.",
     )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Number of CPU threads for whisper.cpp "
+            "(default: all available cores; values above the core count are capped)"
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="Re-transcribe even if .srt exists")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
@@ -72,6 +82,7 @@ def main() -> None:
         language=args.language,
         force=args.force,
         show_progress=not args.quiet,
+        n_threads=args.threads,
     )
 
 

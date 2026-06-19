@@ -893,6 +893,25 @@ class TestProcessDirectory:
         process_directory(tmp_path, **_COMMON_KWARGS)
         assert (tmp_path / "clip.srt").exists()
 
+    def test_n_threads_defaults_to_cpu_count(self, tmp_path, mock_transcribe, mocker):
+        mocker.patch("add_subs_to_videos.transcribe.os.cpu_count", return_value=6)
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        assert mock_transcribe.model.transcribe.call_args.kwargs["n_threads"] == 6
+
+    def test_n_threads_explicit_value_is_forwarded(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS, n_threads=2)
+        assert mock_transcribe.model.transcribe.call_args.kwargs["n_threads"] == 2
+
+    def test_n_threads_above_core_count_is_capped(self, tmp_path, mock_transcribe, mocker, caplog):
+        mocker.patch("add_subs_to_videos.transcribe.os.cpu_count", return_value=4)
+        (tmp_path / "clip.mp4").touch()
+        with caplog.at_level("WARNING"):
+            process_directory(tmp_path, **_COMMON_KWARGS, n_threads=99)
+        assert mock_transcribe.model.transcribe.call_args.kwargs["n_threads"] == 4
+        assert "capping" in caplog.text
+
     def test_existing_srt_skipped_without_force(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
@@ -1037,7 +1056,7 @@ class TestProcessDirectory:
         (tmp_path / "b.mp4").touch()
         cancel = threading.Event()
 
-        def fake_transcribe(media, language="", new_segment_callback=None):
+        def fake_transcribe(media, language="", new_segment_callback=None, **kwargs):
             cancel.set()
             new_segment_callback(mock_transcribe.raw_segs[0])
             return mock_transcribe.raw_segs
@@ -1117,7 +1136,7 @@ class TestProcessDirectory:
     ):
         mocker.patch("add_subs_to_videos.transcribe._probe_duration", return_value=10.0)
 
-        def fake_transcribe(media, language="", new_segment_callback=None):
+        def fake_transcribe(media, language="", new_segment_callback=None, **kwargs):
             for seg in mock_transcribe.raw_segs:
                 new_segment_callback(seg)
             return mock_transcribe.raw_segs

@@ -163,6 +163,13 @@ class TestSaveConfig:
         cfg_file.write_text('foo = "bar"\nbaz = "qux"\n', encoding="utf-8")
         assert load_config() == {}
 
+    def test_threads_round_trips_as_int(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        save_config({"model": "small", "threads": 6})
+        result = load_config()
+        assert result["threads"] == 6
+        assert isinstance(result["threads"], int)
+
     def test_directory_with_double_quote_round_trips(self, monkeypatch, tmp_path):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         directory = '/videos/a "weird" folder'

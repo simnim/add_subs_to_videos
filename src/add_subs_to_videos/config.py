@@ -4,7 +4,7 @@ import os
 import tomllib
 from pathlib import Path
 
-_KEYS = frozenset({"model", "language", "directory"})
+_KEYS = frozenset({"model", "language", "directory", "threads"})
 
 _ESCAPES = {
     "\\": "\\\\",
@@ -17,6 +17,12 @@ _ESCAPES = {
 
 def _escape_toml_basic_string(value: str) -> str:
     return "".join(_ESCAPES.get(c, c) for c in value)
+
+
+def _format_toml_value(value) -> str:
+    if isinstance(value, int):
+        return str(value)
+    return f'"{_escape_toml_basic_string(value)}"'
 
 
 def config_path() -> Path:
@@ -40,6 +46,6 @@ def save_config(updates: dict) -> None:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(f'{k} = "{_escape_toml_basic_string(current[k])}"\n' for k in sorted(current)),
+        "".join(f"{k} = {_format_toml_value(current[k])}\n" for k in sorted(current)),
         encoding="utf-8",
     )
