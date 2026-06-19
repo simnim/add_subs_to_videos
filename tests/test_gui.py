@@ -306,6 +306,21 @@ class TestWorkerThread:
         thread.run()
         assert events == [(50, 100)]
 
+    def test_model_progress_survives_values_above_32_bit_int_range(self, thread, mock_pd):
+        # model_progress is declared as Signal("qlonglong", "qlonglong") specifically
+        # because model file sizes (e.g. large-v3, ~3.1GB) exceed the signed 32-bit
+        # int range a default `Signal(int, int)` would use.
+        downloaded, total = 3_500_000_000, 4_000_000_000
+        events = []
+        thread.model_progress.connect(lambda d, t: events.append((d, t)))
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_model_progress"](downloaded, total)
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert events == [(downloaded, total)]
+
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
         thread = _WorkerThread(tmp_path, "small", "fr", False, False, 4)
         thread.run()

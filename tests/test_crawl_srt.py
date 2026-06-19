@@ -16,6 +16,7 @@ from add_subs_to_videos.transcribe import (
     _format_log_timestamp,
     _probe_duration,
     _raw_to_dicts,
+    default_n_threads,
     is_model_downloaded,
     model_file_path,
     process_directory,
@@ -142,6 +143,18 @@ class TestSegmentsToSrt:
         assert "," in result
         timestamp_line = result.split("\n")[1]
         assert "." not in timestamp_line
+
+    def test_missing_key_raises_key_error(self):
+        segs = [{"start": 0.0, "end": 1.0}]
+        with pytest.raises(KeyError):
+            segments_to_srt(segs)
+
+    def test_multiline_text_preserved(self):
+        segs = [{"start": 0.0, "end": 1.0, "text": "  Line one\nLine two  "}]
+        result = segments_to_srt(segs)
+        assert "Line one\nLine two" in result
+        assert "  Line one" not in result
+        assert "Line two  " not in result
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +609,21 @@ class TestCaptureNativeOutput:
 
         assert "after raise" in capfd.readouterr().out
 
+    def test_falls_back_when_stdout_has_no_fileno(self, caplog, monkeypatch):
+        import io
+
+        class _NoFileno(io.StringIO):
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
+
+        monkeypatch.setattr("sys.stdout", _NoFileno())
+        ran = False
+        with caplog.at_level("DEBUG", logger="root"):
+            with _capture_native_output("whisper.cpp"):
+                ran = True
+
+        assert ran
+
 
 # ---------------------------------------------------------------------------
 # transcribe_video
@@ -874,6 +902,12 @@ def fake_tqdm(mocker):
 
     mocker.patch("add_subs_to_videos.transcribe.tqdm", side_effect=make_bar)
     return created
+
+
+class TestDefaultNThreads:
+    def test_falls_back_to_four_when_cpu_count_is_none(self, mocker):
+        mocker.patch("add_subs_to_videos.transcribe.os.cpu_count", return_value=None)
+        assert default_n_threads() == 4
 
 
 class TestProcessDirectory:
