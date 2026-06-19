@@ -3,10 +3,11 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "add-subs-to-videos"
-version = "0.1.27"
+version = "0.1.34"
 source = { editable = "." }
 dependencies = [
     { name = "pywhispercpp" },
+    { name = "requests" },
     { name = "tqdm" },
 ]
 
@@ -27,6 +28,7 @@ dev = [
 requires-dist = [
     { name = "pyside6", marker = "extra == 'gui'" },
     { name = "pywhispercpp" },
+    { name = "requests" },
     { name = "tqdm" },
 ]
 

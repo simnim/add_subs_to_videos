@@ -12,9 +12,12 @@ from add_subs_to_videos.transcribe import (
     _Cancelled,
     _capture_native_output,
     _describe_transcription_error,
+    _download_model,
     _format_log_timestamp,
     _probe_duration,
     _raw_to_dicts,
+    is_model_downloaded,
+    model_file_path,
     process_directory,
     transcribe_video,
 )
@@ -887,6 +890,36 @@ class TestProcessDirectory:
         process_directory(tmp_video_dir, **_COMMON_KWARGS)
         mock_transcribe.model_cls.assert_called_once()
 
+    def test_download_step_forwards_cancel_and_on_model_progress(self, tmp_path, mock_transcribe, mocker):
+        (tmp_path / "clip.mp4").touch()
+        mock_download = mocker.patch("add_subs_to_videos.transcribe._download_model")
+        cancel = mocker.MagicMock()
+        cancel.is_set.return_value = False
+        on_model_progress = lambda d, t: None
+        process_directory(
+            tmp_path, **_COMMON_KWARGS, cancel=cancel, on_model_progress=on_model_progress
+        )
+        mock_download.assert_called_once_with(
+            "small", show_progress=False, cancel=cancel, on_model_progress=on_model_progress
+        )
+
+    def test_cancelled_during_download_skips_model_load_without_exiting(
+        self, tmp_path, mock_transcribe, mocker
+    ):
+        (tmp_path / "clip.mp4").touch()
+        mocker.patch("add_subs_to_videos.transcribe._download_model", side_effect=_Cancelled)
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        mock_transcribe.model_cls.assert_not_called()
+
+    def test_download_failure_exits_without_loading_model(self, tmp_path, mock_transcribe, mocker):
+        (tmp_path / "clip.mp4").touch()
+        mocker.patch(
+            "add_subs_to_videos.transcribe._download_model", side_effect=RuntimeError("boom")
+        )
+        with pytest.raises(SystemExit):
+            process_directory(tmp_path, **_COMMON_KWARGS)
+        mock_transcribe.model_cls.assert_not_called()
+
     def test_srt_written_next_to_video(self, tmp_path, mock_transcribe):
         video = tmp_path / "clip.mp4"
         video.touch()
@@ -1228,3 +1261,186 @@ class TestProcessDirectory:
         assert summary.video is None
         assert summary.index == summary.total == 2
         assert (summary.done, summary.skipped, summary.failed) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# model_file_path / is_model_downloaded
+# ---------------------------------------------------------------------------
+
+
+class TestModelFilePath:
+    def test_uses_models_dir_and_ggml_prefix(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        assert model_file_path("small") == tmp_path / "ggml-small.bin"
+
+
+class TestIsModelDownloaded:
+    def test_false_when_file_missing(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        assert is_model_downloaded("small") is False
+
+    def test_true_when_file_present(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        (tmp_path / "ggml-small.bin").write_bytes(b"x")
+        assert is_model_downloaded("small") is True
+
+
+# ---------------------------------------------------------------------------
+# _download_model
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, chunks, total=0):
+        self._chunks = chunks
+        self.headers = {"content-length": str(total)} if total else {}
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size=None):
+        yield from self._chunks
+
+
+class TestDownloadModel:
+    def test_skips_download_when_file_already_exists(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        (tmp_path / "ggml-small.bin").write_bytes(b"already here")
+        mock_get = mocker.patch("add_subs_to_videos.transcribe.requests.get")
+        _download_model("small")
+        mock_get.assert_not_called()
+
+    def test_skips_download_for_unknown_model_name(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        mock_get = mocker.patch("add_subs_to_videos.transcribe.requests.get")
+        _download_model("not-a-real-model")
+        mock_get.assert_not_called()
+
+    def test_writes_chunks_and_reports_start_and_final_progress(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        chunks = [b"a" * 5, b"b" * 5]
+        mocker.patch(
+            "add_subs_to_videos.transcribe.requests.get",
+            return_value=_FakeResponse(chunks, total=10),
+        )
+        progress = []
+        _download_model(
+            "small", show_progress=False, on_model_progress=lambda d, t: progress.append((d, t))
+        )
+
+        assert (tmp_path / "ggml-small.bin").read_bytes() == b"a" * 5 + b"b" * 5
+        assert progress[0] == (0, 10)
+        assert progress[-1] == (10, 10)
+
+    def test_unknown_total_size_reports_zero(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        mocker.patch(
+            "add_subs_to_videos.transcribe.requests.get",
+            return_value=_FakeResponse([b"a" * 5], total=0),
+        )
+        progress = []
+        _download_model(
+            "small", show_progress=False, on_model_progress=lambda d, t: progress.append((d, t))
+        )
+        assert all(total == 0 for _downloaded, total in progress)
+
+    def test_keeps_partial_file_on_download_error_for_resuming(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+
+        def bad_iter_content(chunk_size=None):
+            yield b"a" * 5
+            raise RuntimeError("network drop")
+
+        fake_resp = mocker.MagicMock()
+        fake_resp.headers = {"content-length": "100"}
+        fake_resp.iter_content.side_effect = bad_iter_content
+        mocker.patch("add_subs_to_videos.transcribe.requests.get", return_value=fake_resp)
+
+        with pytest.raises(RuntimeError):
+            _download_model("small", show_progress=False)
+
+        assert not (tmp_path / "ggml-small.bin").exists()
+        assert (tmp_path / "ggml-small.bin.part").read_bytes() == b"a" * 5
+
+    def test_cancel_mid_download_keeps_partial_file_for_resuming(self, mocker, tmp_path):
+        import threading
+
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        cancel = threading.Event()
+
+        def chunks_then_cancel(chunk_size=None):
+            yield b"a" * 5
+            cancel.set()
+            yield b"b" * 5
+
+        fake_resp = mocker.MagicMock()
+        fake_resp.headers = {"content-length": "10"}
+        fake_resp.iter_content.side_effect = chunks_then_cancel
+        mocker.patch("add_subs_to_videos.transcribe.requests.get", return_value=fake_resp)
+
+        with pytest.raises(_Cancelled):
+            _download_model("small", show_progress=False, cancel=cancel)
+
+        assert not (tmp_path / "ggml-small.bin").exists()
+        assert (tmp_path / "ggml-small.bin.part").read_bytes() == b"a" * 5
+
+    def test_raises_and_keeps_partial_file_when_download_ends_early(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        mocker.patch(
+            "add_subs_to_videos.transcribe.requests.get",
+            return_value=_FakeResponse([b"a" * 5], total=10),
+        )
+        with pytest.raises(OSError):
+            _download_model("small", show_progress=False)
+        assert not (tmp_path / "ggml-small.bin").exists()
+        assert (tmp_path / "ggml-small.bin.part").read_bytes() == b"a" * 5
+
+    def test_resumes_from_existing_partial_file_with_range_request(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        (tmp_path / "ggml-small.bin.part").write_bytes(b"a" * 5)
+
+        fake_resp = mocker.MagicMock()
+        fake_resp.status_code = 206
+        fake_resp.headers = {"content-length": "5"}
+        fake_resp.iter_content.return_value = iter([b"b" * 5])
+        mock_get = mocker.patch("add_subs_to_videos.transcribe.requests.get", return_value=fake_resp)
+
+        progress = []
+        _download_model(
+            "small", show_progress=False, on_model_progress=lambda d, t: progress.append((d, t))
+        )
+
+        assert mock_get.call_args.kwargs["headers"] == {"Range": "bytes=5-"}
+        assert (tmp_path / "ggml-small.bin").read_bytes() == b"a" * 5 + b"b" * 5
+        assert not (tmp_path / "ggml-small.bin.part").exists()
+        assert progress[0] == (5, 10)
+        assert progress[-1] == (10, 10)
+
+    def test_restarts_from_scratch_when_server_ignores_range_request(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        (tmp_path / "ggml-small.bin.part").write_bytes(b"stale-partial-data")
+
+        fake_resp = mocker.MagicMock()
+        fake_resp.status_code = 200  # server doesn't support range requests
+        fake_resp.headers = {"content-length": "5"}
+        fake_resp.iter_content.return_value = iter([b"c" * 5])
+        mocker.patch("add_subs_to_videos.transcribe.requests.get", return_value=fake_resp)
+
+        _download_model("small", show_progress=False)
+
+        assert (tmp_path / "ggml-small.bin").read_bytes() == b"c" * 5
+
+    def test_416_response_treats_existing_partial_file_as_complete(self, mocker, tmp_path):
+        mocker.patch("add_subs_to_videos.transcribe.MODELS_DIR", tmp_path)
+        (tmp_path / "ggml-small.bin.part").write_bytes(b"a" * 10)
+
+        fake_resp = mocker.MagicMock()
+        fake_resp.status_code = 416
+        mock_get = mocker.patch("add_subs_to_videos.transcribe.requests.get", return_value=fake_resp)
+
+        _download_model("small", show_progress=False)
+
+        assert mock_get.call_args.kwargs["headers"] == {"Range": "bytes=10-"}
+        fake_resp.close.assert_called_once()
+        assert (tmp_path / "ggml-small.bin").read_bytes() == b"a" * 10
+        assert not (tmp_path / "ggml-small.bin.part").exists()

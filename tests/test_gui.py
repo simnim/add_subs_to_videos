@@ -233,6 +233,7 @@ class TestWorkerThread:
             on_progress=ANY,
             on_segment=ANY,
             on_file_progress=ANY,
+            on_model_progress=ANY,
             n_threads=4,
         )
 
@@ -293,6 +294,17 @@ class TestWorkerThread:
         mock_pd.side_effect = fake_process_directory
         thread.run()
         assert fractions == [0.5]
+
+    def test_model_progress_emitted_from_on_model_progress_callback(self, thread, mock_pd):
+        events = []
+        thread.model_progress.connect(lambda d, t: events.append((d, t)))
+
+        def fake_process_directory(*args, **kwargs):
+            kwargs["on_model_progress"](50, 100)
+
+        mock_pd.side_effect = fake_process_directory
+        thread.run()
+        assert events == [(50, 100)]
 
     def test_language_forwarded(self, tmp_path, qapp, mock_pd):
         thread = _WorkerThread(tmp_path, "small", "fr", False, False, 4)
@@ -655,6 +667,68 @@ class TestMainWindow:
         window._on_file_progress(0.5)
         assert window._overall_bar.value() == 0
         assert window._overall_bar.format() == "Ready"
+
+    def test_on_model_progress_repurposes_status_label_and_overall_bar(self, window):
+        window._on_model_progress(50_000_000, 100_000_000)
+        assert "Downloading model" in window._status_label.text()
+        assert "medium" in window._status_label.text()
+        assert window._overall_bar.minimum() == 0
+        # QProgressBar's range is a 32-bit int, so byte counts are scaled to KiB.
+        assert window._overall_bar.maximum() == 100_000_000 // 1024
+        assert window._overall_bar.value() == 50_000_000 // 1024
+        assert window._overall_bar.format() == "50%"
+
+    def test_on_model_progress_shows_downloading_icon(self, window):
+        window._on_model_progress(50, 100)
+        assert (
+            window._model_status_icon.pixmap().cacheKey()
+            == window._model_downloading_icon.pixmap(16, 16).cacheKey()
+        )
+
+    def test_on_model_progress_with_unknown_total_is_indeterminate(self, window):
+        window._on_model_progress(10, 0)
+        assert window._overall_bar.minimum() == 0
+        assert window._overall_bar.maximum() == 0
+        assert window._overall_bar.format() == "Downloading…"
+
+    def test_progress_start_after_model_progress_restores_file_progress_display(self, window, tmp_path):
+        window._on_model_progress(100, 100)
+        window._on_progress(self._event("start", index=1, total=3, video=tmp_path / "movie.mp4"))
+        assert "Processing" in window._status_label.text()
+        assert window._overall_bar.maximum() == 3 * _OVERALL_PROGRESS_SCALE
+
+    def test_refresh_model_status_icon_shows_downloaded_when_cached(self, window, mocker):
+        mocker.patch("add_subs_to_videos.gui.is_model_downloaded", return_value=True)
+        window._refresh_model_status_icon()
+        assert "is downloaded" in window._model_status_icon.toolTip()
+        assert (
+            window._model_status_icon.pixmap().cacheKey()
+            == window._done_icon.pixmap(16, 16).cacheKey()
+        )
+
+    def test_refresh_model_status_icon_shows_not_downloaded_when_missing(self, window, mocker):
+        mocker.patch("add_subs_to_videos.gui.is_model_downloaded", return_value=False)
+        window._refresh_model_status_icon()
+        assert "will be downloaded" in window._model_status_icon.toolTip()
+        assert (
+            window._model_status_icon.pixmap().cacheKey()
+            == window._model_not_downloaded_icon.pixmap(16, 16).cacheKey()
+        )
+
+    def test_changing_model_combo_rechecks_download_status(self, window, mocker):
+        mock_is_downloaded = mocker.patch("add_subs_to_videos.gui.is_model_downloaded", return_value=False)
+        mock_is_downloaded.reset_mock()
+        window._model_combo.setCurrentText("tiny")
+        mock_is_downloaded.assert_called_with("tiny")
+
+    def test_on_done_rechecks_model_status_icon(self, window, mocker):
+        mocker.patch("add_subs_to_videos.gui.is_model_downloaded", return_value=True)
+        window._on_model_progress(50, 100)  # leaves the icon on "downloading"
+        window._on_done(True)
+        assert (
+            window._model_status_icon.pixmap().cacheKey()
+            == window._done_icon.pixmap(16, 16).cacheKey()
+        )
 
     def test_run_resets_progress_widgets_to_starting_state(self, window, tmp_path, mocker):
         mocker.patch("add_subs_to_videos.gui._WorkerThread")

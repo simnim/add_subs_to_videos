@@ -13,12 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import requests
+from pywhispercpp.constants import AVAILABLE_MODELS, MODELS_BASE_URL, MODELS_DIR, MODELS_PREFIX_URL
 from pywhispercpp.model import Model
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from .files import find_videos, format_size_mb
 from .srt import segments_to_srt
+
+# Minimum interval between throttled on_model_progress callbacks during a
+# model download, to avoid flooding a GUI's cross-thread signal queue.
+_MODEL_PROGRESS_THROTTLE_SECONDS = 0.1
 
 
 class _Cancelled(Exception):
@@ -40,6 +46,106 @@ class ProgressEvent:
 def default_n_threads() -> int:
     """Best-effort thread count for whisper.cpp: all detected CPU cores."""
     return os.cpu_count() or 4
+
+
+def _model_url(model_name: str) -> str:
+    return f"{MODELS_BASE_URL}/{MODELS_PREFIX_URL}-{model_name}.bin"
+
+
+def model_file_path(model_name: str) -> Path:
+    """Returns the local cache path pywhispercpp uses for a given model name."""
+    return MODELS_DIR / os.path.basename(_model_url(model_name))
+
+
+def is_model_downloaded(model_name: str) -> bool:
+    """Synchronous, cheap check usable outside of a run (e.g. by the GUI)."""
+    return model_file_path(model_name).is_file()
+
+
+def _download_model(
+    model_name: str,
+    *,
+    show_progress: bool = True,
+    cancel: threading.Event | None = None,
+    on_model_progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Downloads the ggml model file if not already cached.
+
+    Mirrors pywhispercpp.utils.download_model's validation/skip-if-exists
+    behavior, but with larger chunks, a throttled progress callback, and
+    cancellation support, so callers (the GUI) can show download progress
+    without flooding a cross-thread signal queue.
+
+    Downloads to a `.part` sibling file and only renames it to the final
+    `model_file_path()` once complete, so `is_model_downloaded()` never sees
+    a half-written file as finished. If a `.part` file already exists (e.g.
+    the app was closed or crashed mid-download), resumes it via an HTTP
+    Range request rather than starting over, falling back to a fresh
+    download if the server doesn't honor the range.
+    """
+    if model_name not in AVAILABLE_MODELS:
+        return  # let Model() raise/log its own clear error for an invalid name
+    file_path = model_file_path(model_name)
+    if file_path.exists():
+        return
+
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    part_path = file_path.with_name(file_path.name + ".part")
+    resume_from = part_path.stat().st_size if part_path.exists() else 0
+
+    logging.info("Downloading model '%s'", model_name)
+    headers = {"Range": f"bytes={resume_from}-"} if resume_from else {}
+    resp = requests.get(_model_url(model_name), stream=True, headers=headers)
+
+    if resume_from and resp.status_code == 416:
+        # Server confirms we already have the full file; nothing left to fetch.
+        resp.close()
+        os.replace(part_path, file_path)
+        if on_model_progress is not None:
+            on_model_progress(resume_from, resume_from)
+        return
+
+    resp.raise_for_status()
+    resumed = bool(resume_from) and resp.status_code == 206
+    if resume_from and not resumed:
+        logging.debug("Server did not honor resume request for '%s'; restarting", model_name)
+        resume_from = 0
+
+    content_length = int(resp.headers.get("content-length", 0))
+    total = resume_from + content_length if resumed else content_length
+    downloaded = resume_from
+    last_emit = 0.0
+    if on_model_progress is not None:
+        on_model_progress(downloaded, total)
+    bar = tqdm(
+        total=total or None,
+        initial=downloaded,
+        desc=f"Downloading model '{model_name}'",
+        unit="iB",
+        unit_scale=True,
+        unit_divisor=1024,
+        disable=not show_progress,
+    )
+    with bar, open(part_path, "ab" if resumed else "wb") as f:
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            if cancel is not None and cancel.is_set():
+                raise _Cancelled()
+            size = f.write(chunk)
+            downloaded += size
+            bar.update(size)
+            now = time.monotonic()
+            if on_model_progress is not None and (
+                now - last_emit >= _MODEL_PROGRESS_THROTTLE_SECONDS or downloaded >= total
+            ):
+                on_model_progress(downloaded, total)
+                last_emit = now
+
+    if total and downloaded < total:
+        raise OSError(
+            f"Download of model '{model_name}' ended early"
+            f" ({downloaded} of {total} bytes) — it can be resumed on the next run"
+        )
+    os.replace(part_path, file_path)
 
 
 def _raw_to_dicts(raw_segments) -> list[dict]:
@@ -228,6 +334,7 @@ def process_directory(
     on_progress: Callable[[ProgressEvent], None] | None = None,
     on_segment: Callable[[str], None] | None = None,
     on_file_progress: Callable[[float], None] | None = None,
+    on_model_progress: Callable[[int, int], None] | None = None,
     n_threads: int | None = None,
 ) -> None:
     videos = find_videos(root)
@@ -257,6 +364,17 @@ def process_directory(
         )
         effective_threads = max_threads
     logging.debug("Using %d thread(s) for transcription", effective_threads)
+
+    try:
+        _download_model(
+            model_name, show_progress=show_progress, cancel=cancel, on_model_progress=on_model_progress
+        )
+    except _Cancelled:
+        logging.info("Cancelled.")
+        return
+    except Exception as exc:
+        logging.error("Failed to download model '%s': %s", model_name, exc, exc_info=True)
+        sys.exit(1)
 
     logging.info("Loading model '%s'", model_name)
     t_load = time.monotonic()

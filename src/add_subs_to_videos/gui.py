@@ -41,9 +41,9 @@ from PySide6.QtWidgets import (
 )
 
 from .config import load_config, save_config
-from .files import VIDEO_EXTENSIONS, find_videos
+from .files import VIDEO_EXTENSIONS, find_videos, format_size_mb
 from .runtime_paths import ensure_bundled_ffmpeg_on_path
-from .transcribe import default_n_threads, process_directory
+from .transcribe import default_n_threads, is_model_downloaded, process_directory
 
 # QProgressBar values are integers, so the overall bar's range is scaled up by
 # this factor to give smooth sub-file resolution when combining the count of
@@ -72,6 +72,26 @@ def _check_icon(color: QColor) -> QIcon:
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     painter.drawPolyline([QPoint(3, 8), QPoint(7, 12), QPoint(13, 4)])
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _download_icon(color: QColor) -> QIcon:
+    """Render a download-arrow glyph (shaft + head) as a QIcon in the given color."""
+    size = 16
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = painter.pen()
+    pen.setColor(color)
+    pen.setWidth(2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(QPoint(8, 2), QPoint(8, 11))
+    painter.drawPolyline([QPoint(4, 7), QPoint(8, 11), QPoint(12, 7)])
+    painter.drawLine(QPoint(3, 14), QPoint(13, 14))
     painter.end()
     return QIcon(pixmap)
 
@@ -344,6 +364,9 @@ class _WorkerThread(QThread):
     log_line = Signal(object, str)
     progress = Signal(object)
     file_progress = Signal(float)
+    # "qlonglong" rather than the default 32-bit `int` mapping, since model
+    # file sizes (e.g. large-v3 at ~3.1GB) exceed a signed 32-bit int.
+    model_progress = Signal("qlonglong", "qlonglong")
     finished_run = Signal(bool)
 
     def __init__(
@@ -414,6 +437,7 @@ class _WorkerThread(QThread):
                 on_progress=_on_progress,
                 on_segment=_on_segment,
                 on_file_progress=self.file_progress.emit,
+                on_model_progress=self.model_progress.emit,
                 n_threads=self._threads,
             )
         except SystemExit as exc:
@@ -532,6 +556,8 @@ class MainWindow(QMainWindow):
         self._done_icon = _check_icon(QColor("#2e7d32"))
         self._skipped_icon = _check_icon(QColor("#9e9e9e"))
         self._scroll_icon = _emoji_icon("\U0001F4DC")
+        self._model_not_downloaded_icon = _download_icon(QColor("#9e9e9e"))
+        self._model_downloading_icon = _download_icon(QColor("#1565c0"))
 
         tree_header_row = QHBoxLayout()
         self._tree_label = QLabel("Files to process")
@@ -597,7 +623,10 @@ class MainWindow(QMainWindow):
         for m in ("tiny", "base", "small", "medium", "large-v3"):
             self._model_combo.addItem(m)
         self._model_combo.setCurrentText("medium")
+        self._model_combo.currentTextChanged.connect(self._refresh_model_status_icon)
         opts.addWidget(self._model_combo)
+        self._model_status_icon = QLabel()
+        opts.addWidget(self._model_status_icon)
         opts.addSpacing(16)
         opts.addWidget(QLabel("Language:"))
         self._lang_combo = QComboBox()
@@ -640,6 +669,7 @@ class MainWindow(QMainWindow):
         self._current_total = 0
 
         self._load_prefs()
+        self._refresh_model_status_icon()
 
     def _load_prefs(self) -> None:
         cfg = load_config()
@@ -665,6 +695,15 @@ class MainWindow(QMainWindow):
             "directory": str(self._folder) if self._folder else "",
             "threads": self._threads_spin.value(),
         })
+
+    def _refresh_model_status_icon(self) -> None:
+        model_name = self._model_combo.currentText()
+        if is_model_downloaded(model_name):
+            self._model_status_icon.setPixmap(self._done_icon.pixmap(16, 16))
+            self._model_status_icon.setToolTip(f"Model '{model_name}' is downloaded")
+        else:
+            self._model_status_icon.setPixmap(self._model_not_downloaded_icon.pixmap(16, 16))
+            self._model_status_icon.setToolTip(f"Model '{model_name}' will be downloaded on first run")
 
     def _shutdown_threads(self) -> None:
         if self._worker is not None and self._worker.isRunning():
@@ -875,6 +914,25 @@ class MainWindow(QMainWindow):
             combined = (self._current_video_index - 1) + fraction
             self._overall_bar.setValue(round(combined * _OVERALL_PROGRESS_SCALE))
 
+    def _on_model_progress(self, downloaded: int, total: int) -> None:
+        self._model_status_icon.setPixmap(self._model_downloading_icon.pixmap(16, 16))
+        name = self._model_combo.currentText()
+        self._model_status_icon.setToolTip(f"Downloading model '{name}'…")
+        if total:
+            pct = downloaded / total * 100
+            self._status_label.setText(
+                f"Downloading model '{name}'… {format_size_mb(downloaded)} / {format_size_mb(total)}"
+            )
+            # QProgressBar's range/value are a 32-bit C++ int, too narrow for
+            # raw byte counts on multi-GB models — use KiB instead.
+            self._overall_bar.setRange(0, total // 1024 or 1)
+            self._overall_bar.setValue(downloaded // 1024)
+            self._overall_bar.setFormat(f"{pct:.0f}%")
+        else:
+            self._status_label.setText(f"Downloading model '{name}'…")
+            self._overall_bar.setRange(0, 0)
+            self._overall_bar.setFormat("Downloading…")
+
     def _cancel_run(self) -> None:
         if self._worker:
             self._worker.cancel()
@@ -917,6 +975,7 @@ class MainWindow(QMainWindow):
         self._worker.log_line.connect(self._on_log_line)
         self._worker.progress.connect(self._on_progress)
         self._worker.file_progress.connect(self._on_file_progress)
+        self._worker.model_progress.connect(self._on_model_progress)
         self._worker.finished_run.connect(self._on_done)
         self._worker.start()
 
@@ -924,6 +983,7 @@ class MainWindow(QMainWindow):
         self._run_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+        self._refresh_model_status_icon()
         if self._final_event is not None:
             e = self._final_event
             mins, secs = divmod(int(e.elapsed or 0), 60)

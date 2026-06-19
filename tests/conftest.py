@@ -25,7 +25,8 @@ def tmp_video_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mock_transcribe(mocker):
-    """Patches add_subs_to_videos.transcribe.Model with canned outputs."""
+    """Patches add_subs_to_videos.transcribe.Model with canned outputs, and
+    stubs out the model-download step so tests never hit the network."""
 
     def make_seg(start, end, text):
         s = mocker.MagicMock()
@@ -44,6 +45,8 @@ def mock_transcribe(mocker):
     mock_model_cls = mocker.patch(
         "add_subs_to_videos.transcribe.Model", return_value=mock_model_instance
     )
+    # Avoid a real network request from the model pre-download step.
+    mocker.patch("add_subs_to_videos.transcribe._download_model")
 
     return types.SimpleNamespace(
         model_cls=mock_model_cls,
