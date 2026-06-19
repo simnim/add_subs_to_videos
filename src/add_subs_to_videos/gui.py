@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -549,7 +550,7 @@ class MainWindow(QMainWindow):
         self._scan_message.setStyleSheet(_MUTED_TEXT_STYLE)
         self._scan_message.setTextFormat(Qt.TextFormat.PlainText)
         self._scan_message.setVisible(False)
-        layout.addWidget(self._scan_message)
+        layout.addWidget(self._scan_message, 1)
 
         self._file_table = QTableWidget(0, 3)
         self._file_table.setHorizontalHeaderLabels(["File", "Status", "Logs"])
@@ -585,9 +586,10 @@ class MainWindow(QMainWindow):
             header.sizeHint().height()
             + self._file_table.verticalHeader().defaultSectionSize() * _TABLE_VISIBLE_ROWS
         )
-        self._file_table.setFixedHeight(table_height)
+        self._file_table.setMinimumHeight(table_height)
+        self._file_table.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._file_table.setVisible(False)
-        layout.addWidget(self._file_table)
+        layout.addWidget(self._file_table, 1)
 
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Model:"))

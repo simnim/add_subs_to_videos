@@ -14,6 +14,8 @@ https://github.com/simnim/add_subs_to_videos
 
 <img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="480" alt="GUI – transcription in progress">
 
+Drag a folder (or single video) onto the window, pick Model/Language/Threads, optionally check "Force re-run" or "Debug logging", then hit Run — overall and per-file progress bars and a live transcription log appear, with a Cancel button to stop mid-run.
+
 ## Install
 
 Every option below gives you both the `add_subs_to_videos` CLI command and an
@@ -50,9 +52,14 @@ This installs both the `add_subs_to_videos` CLI and the `add-subs-to-videos-gui`
 add_subs_to_videos /path/to/videos
 add_subs_to_videos /path/to/videos --model large-v3 --language en
 add_subs_to_videos /path/to/videos --force   # re-transcribe even if .srt exists
+add_subs_to_videos /path/to/videos --threads 4   # default: all available CPU cores
+add_subs_to_videos /path/to/videos --quiet   # only warnings/errors + final summary
+add_subs_to_videos /path/to/videos --verbose # debug output, incl. detected language
 ```
 
-`movie.mp4` → `movie.srt`, placed in the same directory. Supports `.mp4`, `.mkv`, `.avi`, `.mov`, `.m4v`, `.webm`, and more.
+`movie.mp4` → `movie.srt`, placed in the same directory. Supports `.mp4`, `.mkv`, `.avi`, `.mov`, `.m4v`, `.webm`, `.ts`, `.flv`.
+
+Your last-used `directory`, `model`, `language`, and `threads` are remembered in `~/.config/add-subs-to-videos/config.toml`, shared between the CLI and GUI — e.g. pick a folder in the GUI and a later CLI run can omit the directory argument.
 
 ## Models
 
