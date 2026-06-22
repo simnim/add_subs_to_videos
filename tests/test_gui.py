@@ -745,12 +745,14 @@ class TestMainWindow:
             == window._done_icon.pixmap(16, 16).cacheKey()
         )
 
-    def test_run_resets_progress_widgets_to_starting_state(self, window, tmp_path, mocker):
+    def test_run_resets_progress_widgets_to_starting_state(self, window, tmp_path, mocker, qtbot):
         mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        video = tmp_path / "movie.mp4"
+        video.touch()
         window._drop_zone.folder_dropped.emit(tmp_path)
+        qtbot.waitUntil(lambda: window._file_table.rowCount() == 1)
 
         # Dirty up the widgets as if a previous run had completed.
-        video = tmp_path / "movie.mp4"
         window._on_progress(self._event("start", index=1, total=2, video=video))
         window._on_progress(self._event("done", index=1, total=2, video=video))
         window._file_logs[video] = ["leftover from previous run"]
@@ -764,8 +766,11 @@ class TestMainWindow:
         assert window._file_bar.value() == 0
         assert window._file_bar.format() == ""
         assert window._status_label.text() == "Preparing…"
-        assert window._counts_label.text() == f"{window._file_table.rowCount()} file(s) to process"
         assert window._file_logs == {}
+
+        # The rescan that _run() kicks off (so newly-added files are picked
+        # up) completes asynchronously and then starts the worker.
+        qtbot.waitUntil(lambda: window._counts_label.text() == "1 file(s) to process")
 
     def test_cancel_button_disabled_initially(self, window):
         assert not window._cancel_btn.isEnabled()
@@ -777,10 +782,68 @@ class TestMainWindow:
         assert window._cancel_btn.isEnabled()
         assert not window._run_btn.isEnabled()
 
-    def test_cancel_button_disabled_on_done(self, window, tmp_path):
-        window._cancel_btn.setEnabled(True)
+    def test_cancel_button_enabled_for_rerun_countdown_on_done(self, window, tmp_path):
+        window._cancel_btn.setEnabled(False)
         window._on_done(True)
+        # Re-enabled so the user can cancel the auto re-run countdown that starts on completion.
+        assert window._cancel_btn.isEnabled()
+
+    def test_cancel_button_disabled_on_done_after_manual_cancel(self, window, mocker):
+        window._worker = mocker.MagicMock()
+        window._cancel_run()
+        window._on_done(False)
         assert not window._cancel_btn.isEnabled()
+
+    def test_on_done_starts_rerun_countdown(self, window):
+        window._on_done(True)
+        assert window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run (auto re-run in 10:00)"
+        assert window._run_btn.isEnabled()
+
+    def test_on_done_after_manual_cancel_does_not_start_countdown(self, window, mocker):
+        window._worker = mocker.MagicMock()
+        window._cancel_run()
+        window._on_done(False)
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run"
+
+    def test_rerun_tick_decrements_and_updates_button_text(self, window):
+        window._on_done(True)
+        window._on_rerun_tick()
+        assert window._run_btn.text() == "Run (auto re-run in 9:59)"
+
+    def test_rerun_tick_at_zero_triggers_run_again(self, window, mocker):
+        window._on_done(True)
+        window._rerun_seconds_left = 1
+        mock_run = mocker.patch.object(window, "_run")
+        window._on_rerun_tick()
+        mock_run.assert_called_once()
+        assert not window._rerun_timer.isActive()
+
+    def test_cancel_run_during_countdown_stops_it_without_touching_worker(self, window, mocker):
+        mock_worker = mocker.MagicMock()
+        window._worker = mock_worker
+        window._on_done(True)
+        window._cancel_run()
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run"
+        assert not window._cancel_btn.isEnabled()
+        mock_worker.cancel.assert_not_called()
+
+    def test_run_during_countdown_stops_it_and_shows_running(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._on_done(True)
+        window._run()
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Running"
+
+    def test_clear_selection_during_countdown_stops_it(self, window, tmp_path):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._on_done(True)
+        window._clear_selection()
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run"
 
     def test_cancel_run_calls_worker_cancel(self, window, mocker):
         mock_worker = mocker.MagicMock()
@@ -966,6 +1029,46 @@ class TestMainWindow:
         window._file_logs[tmp_path / "old.mp4"] = ["stale"]
         window._run()
         assert window._file_logs == {}
+
+    def test_run_rescans_and_picks_up_file_added_after_initial_scan(self, window, tmp_path, mocker, qtbot):
+        mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        (tmp_path / "first.mp4").touch()
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        qtbot.waitUntil(lambda: window._file_table.rowCount() == 1)
+
+        # Simulate a file dropped into the watched folder while idle/counting down.
+        (tmp_path / "second.mp4").touch()
+
+        window._run()
+
+        qtbot.waitUntil(lambda: window._file_table.rowCount() == 2)
+        assert window._counts_label.text() == "2 file(s) to process"
+
+    def test_run_starts_worker_only_after_rescan_completes(self, window, tmp_path, mocker, qtbot):
+        mock_worker_cls = mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        qtbot.waitUntil(lambda: window._counts_label.text() != "")
+
+        window._run()
+        assert window._pending_run
+        mock_worker_cls.assert_not_called()
+
+        qtbot.waitUntil(lambda: mock_worker_cls.return_value.start.called)
+        assert not window._pending_run
+
+    def test_cancel_during_rescan_aborts_before_worker_starts(self, window, tmp_path, mocker):
+        mock_worker_cls = mocker.patch("add_subs_to_videos.gui._WorkerThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._run()
+        assert window._pending_run
+
+        window._cancel_run()
+
+        assert not window._pending_run
+        assert window._run_btn.text() == "Run"
+        assert window._run_btn.isEnabled()
+        assert not window._cancel_btn.isEnabled()
+        mock_worker_cls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

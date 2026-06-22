@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QPoint, Qt, QThread, Signal
+from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -454,6 +454,7 @@ class _WorkerThread(QThread):
 
 
 class MainWindow(QMainWindow):
+    _AUTO_RERUN_SECONDS = 600
     _RUN_BTN_STYLE = (
         "QPushButton:enabled {"
         "  background: #D6EAFB;"
@@ -490,6 +491,12 @@ class MainWindow(QMainWindow):
         self.setMinimumWidth(560)
         self._folder: Path | None = None
         self._worker: _WorkerThread | None = None
+        self._pending_run = False
+        self._cancel_requested = False
+        self._rerun_seconds_left = 0
+        self._rerun_timer = QTimer(self)
+        self._rerun_timer.setInterval(1000)
+        self._rerun_timer.timeout.connect(self._on_rerun_tick)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -706,6 +713,7 @@ class MainWindow(QMainWindow):
             self._model_status_icon.setToolTip(f"Model '{model_name}' will be downloaded on first run")
 
     def _shutdown_threads(self) -> None:
+        self._rerun_timer.stop()
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait()
@@ -719,6 +727,8 @@ class MainWindow(QMainWindow):
 
     def _on_folder_set(self, path: Path) -> None:
         self._folder = path
+        self._pending_run = False
+        self._stop_rerun_countdown()
         self._run_btn.setEnabled(True)
         self._change_hint.setVisible(True)
         self._clear_btn.setHidden(False)
@@ -728,6 +738,8 @@ class MainWindow(QMainWindow):
     def _clear_selection(self) -> None:
         self._folder = None
         self._drop_zone.set_folder(None)
+        self._pending_run = False
+        self._stop_rerun_countdown()
         self._run_btn.setEnabled(False)
         self._clear_btn.setHidden(True)
         self._change_hint.setVisible(False)
@@ -765,30 +777,32 @@ class MainWindow(QMainWindow):
                 self._scan_message.setText("(no video files found)")
                 self._scan_message.setVisible(True)
                 self._counts_label.setText("0 files to process")
-                return
-
-            self._scan_message.setVisible(False)
-            self._counts_label.setText(f"{len(files)} file(s) to process")
-            self._file_table.setRowCount(len(files))
-            self._file_row_by_path = {}
-            self._path_by_row = {}
-            for row, path in enumerate(files):
-                display = path.name
-                if self._folder is not None and self._folder.is_dir():
-                    try:
-                        display = str(path.relative_to(self._folder))
-                    except ValueError:
-                        pass
-                self._file_table.setItem(row, 0, QTableWidgetItem(display))
-                self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
-                logs_item = QTableWidgetItem()
-                logs_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._file_table.setItem(row, 2, logs_item)
-                self._file_row_by_path[path] = row
-                self._path_by_row[row] = path
-            self._file_table.setVisible(True)
+            else:
+                self._scan_message.setVisible(False)
+                self._counts_label.setText(f"{len(files)} file(s) to process")
+                self._file_table.setRowCount(len(files))
+                self._file_row_by_path = {}
+                self._path_by_row = {}
+                for row, path in enumerate(files):
+                    display = path.name
+                    if self._folder is not None and self._folder.is_dir():
+                        try:
+                            display = str(path.relative_to(self._folder))
+                        except ValueError:
+                            pass
+                    self._file_table.setItem(row, 0, QTableWidgetItem(display))
+                    self._file_table.setItem(row, 1, QTableWidgetItem("Pending"))
+                    logs_item = QTableWidgetItem()
+                    logs_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self._file_table.setItem(row, 2, logs_item)
+                    self._file_row_by_path[path] = row
+                    self._path_by_row[row] = path
+                self._file_table.setVisible(True)
         except RuntimeError:
-            pass  # widget was destroyed (e.g. window closed) before the scan finished
+            return  # widget was destroyed (e.g. window closed) before the scan finished
+        if self._pending_run:
+            self._pending_run = False
+            self._start_worker()
 
     def _clear_tree_view(self) -> None:
         self._tree_scan_token += 1
@@ -934,22 +948,58 @@ class MainWindow(QMainWindow):
             self._overall_bar.setFormat("Downloading…")
 
     def _cancel_run(self) -> None:
+        if self._rerun_timer.isActive():
+            self._stop_rerun_countdown()
+            return
+        if self._pending_run:
+            self._pending_run = False
+            self._run_btn.setEnabled(True)
+            self._run_btn.setText("Run")
+            self._cancel_btn.setEnabled(False)
+            self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+            self._status_label.setText("Cancelled")
+            return
+        self._cancel_requested = True
         if self._worker:
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._status_label.setText("Cancelling…")
 
+    def _start_rerun_countdown(self) -> None:
+        self._rerun_seconds_left = self._AUTO_RERUN_SECONDS
+        self._run_btn.setEnabled(True)
+        self._update_rerun_button_text()
+        self._cancel_btn.setEnabled(True)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
+        self._rerun_timer.start()
+
+    def _stop_rerun_countdown(self) -> None:
+        self._rerun_timer.stop()
+        self._run_btn.setText("Run")
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+
+    def _update_rerun_button_text(self) -> None:
+        mins, secs = divmod(max(self._rerun_seconds_left, 0), 60)
+        self._run_btn.setText(f"Run (auto re-run in {mins}:{secs:02d})")
+
+    def _on_rerun_tick(self) -> None:
+        self._rerun_seconds_left -= 1
+        if self._rerun_seconds_left <= 0:
+            self._rerun_timer.stop()
+            self._run_btn.setText("Run")
+            self._run()
+            return
+        self._update_rerun_button_text()
+
     def _run(self) -> None:
         if not self._folder:
             return
-        self._file_logs = {}
-        for row in range(self._file_table.rowCount()):
-            item = self._file_table.item(row, 2)
-            if item is not None:
-                item.setIcon(QIcon())
-                item.setToolTip("")
+        self._rerun_timer.stop()
+        self._cancel_requested = False
         self._run_btn.setEnabled(False)
+        self._run_btn.setText("Running")
         self._cancel_btn.setEnabled(True)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
         self._final_event = None
@@ -961,8 +1011,13 @@ class MainWindow(QMainWindow):
         self._file_bar.setValue(0)
         self._file_bar.setFormat("")
         self._status_label.setText("Preparing…")
-        total = self._file_table.rowCount()
-        self._counts_label.setText(f"{total} file(s) to process")
+        # Rescan before starting so the file list (and what actually gets
+        # processed) reflects any files added/removed since the last scan —
+        # e.g. while waiting on the auto re-run countdown.
+        self._pending_run = True
+        self._start_tree_scan(self._folder)
+
+    def _start_worker(self) -> None:
         lang = self._lang_combo.currentData() or None
         self._worker = _WorkerThread(
             self._folder,
@@ -981,6 +1036,7 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, success: bool) -> None:
         self._run_btn.setEnabled(True)
+        self._run_btn.setText("Run")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._refresh_model_status_icon()
@@ -1005,6 +1061,8 @@ class MainWindow(QMainWindow):
             self._overall_bar.setFormat(label)
             self._file_bar.setValue(0)
             self._file_bar.setFormat("")
+        if not self._cancel_requested:
+            self._start_rerun_countdown()
 
 
 def _dev_icon_path() -> Path | None:
