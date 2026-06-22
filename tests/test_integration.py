@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -78,3 +80,50 @@ def test_skip_logic_honours_existing_srt(downloaded_audio):
     )
 
     assert srt_path.read_text(encoding="utf-8") == "sentinel content"
+
+
+@pytest.mark.integration
+def test_cancel_mid_transcription_preserves_partial_part_file(downloaded_audio):
+    """Cancelling a real, in-progress transcription leaves partial content in
+    .srt.part (flushed by whisper.cpp's native segment callback) and never
+    writes the final .srt."""
+    srt_path = downloaded_audio.with_suffix(".srt")
+    part_path = srt_path.with_name(srt_path.name + ".part")
+    srt_path.unlink(missing_ok=True)
+    part_path.unlink(missing_ok=True)
+
+    cancel = threading.Event()
+    thread = threading.Thread(
+        target=process_directory,
+        args=(downloaded_audio.parent,),
+        kwargs=dict(
+            model_name="tiny",
+            language="en",
+            force=True,
+            n_threads=1,
+            cancel=cancel,
+            show_progress=False,
+        ),
+    )
+    thread.start()
+
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if part_path.exists() and " --> " in part_path.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("Timed out waiting for partial .srt.part content to appear")
+
+        cancel.set()
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "process_directory did not stop after cancellation"
+
+        assert part_path.exists(), ".srt.part should be retained after cancellation"
+        partial_content = part_path.read_text(encoding="utf-8")
+        assert " --> " in partial_content
+        assert not srt_path.exists(), "final .srt should not be written after cancellation"
+    finally:
+        thread.join(timeout=5)
+        part_path.unlink(missing_ok=True)
