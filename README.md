@@ -10,12 +10,6 @@ It crawls a directory recursively, transcribes every video it finds using [whisp
 
 https://github.com/simnim/add_subs_to_videos
 
-# GUI screenshot
-
-<img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="480" alt="GUI – transcription in progress">
-
-Drag a folder (or single video) onto the window then hit Run. Includes Handy progress bars model download and live transcription logs per episode.
-
 ## Install
 
 Every option below gives you both the `add_subs_to_videos` CLI command and an
@@ -61,6 +55,23 @@ add_subs_to_videos /path/to/videos --verbose # debug output, incl. detected lang
 `movie.mp4` → `movie.srt`, placed in the same directory. Supports `.mp4`, `.mkv`, `.avi`, `.mov`, `.m4v`, `.webm`, `.ts`, `.flv`.
 
 Your last-used `directory`, `model`, `language`, and `threads` are remembered in `~/.config/add-subs-to-videos/config.toml`, shared between the CLI and GUI — e.g. pick a folder in the GUI and a later CLI run can omit the directory argument.
+
+### GUI
+
+<img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="800" alt="GUI – transcription in progress">
+
+Drag a folder (or single video) onto the window, or click to pick one, then hit Run. Includes handy progress bars for model downloads and live, per-file transcription logs.
+
+- A file table lists every discovered video with a live status (Pending / Processing / Done / Skipped / Failed) and a clickable log icon per row that opens that file's transcript/log output.
+- Model dropdown (tiny/base/small/medium/large-v3) shows whether the model is already downloaded, not yet downloaded, or currently downloading.
+- Language dropdown offers auto-detect or any of whisper.cpp's supported languages.
+- A threads spinbox, a "Force re-run" checkbox, and a "Debug logging" checkbox.
+- Overall and per-file progress bars, plus a Cancel button that aborts the current download or in-progress file.
+- **Auto re-run:** once a run finishes (and wasn't cancelled), the Run button relabels to a countdown — "Run (auto re-run in M:SS)" — and automatically rescans the folder and re-runs after 10 minutes, so it can be left running unattended to pick up new files as they appear. Clicking Cancel during the countdown stops it.
+
+### Partial subtitles & cancellation
+
+While a file is transcribing, segments are streamed incrementally into a `movie.srt.part` sidecar next to the eventual `movie.srt`, so you can open a growing, valid SRT file mid-run. On success it's atomically renamed to `movie.srt`. If you cancel (or the process is interrupted), the `.part` file is left on disk as-is — it's never deleted, but it's also never resumed: a later run on a file that only has a stray `.part` (no finished `.srt`) re-transcribes it from scratch, overwriting the partial content. Files that already have a completed `.srt` are still skipped unless `--force`/"Force re-run" is set.
 
 ## Models
 
