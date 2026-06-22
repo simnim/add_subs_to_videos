@@ -20,7 +20,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from .files import find_videos, format_size_mb
-from .srt import segments_to_srt
+from .srt import format_srt_entry, segments_to_srt
 
 # Minimum interval between throttled on_model_progress callbacks during a
 # model download, to avoid flooding a GUI's cross-thread signal queue.
@@ -280,6 +280,7 @@ def transcribe_video(
     *,
     model: Model,
     language: str | None,
+    part_path: Path | None = None,
     cancel: threading.Event | None = None,
     on_segment: Callable[[str], None] | None = None,
     on_file_progress: Callable[[float], None] | None = None,
@@ -289,20 +290,31 @@ def transcribe_video(
     extra: dict = {}
     if n_threads is not None:
         extra["n_threads"] = n_threads
-    if cancel is not None or on_segment is not None or on_file_progress is not None:
+    part_file = None
+    if cancel is not None or on_segment is not None or on_file_progress is not None or part_path is not None:
         if on_file_progress is not None and duration is None:
             duration = _probe_duration(video_path)
             logging.debug("Probed duration for %s: %s", video_path.name, duration)
 
+        if part_path is not None:
+            part_file = open(part_path, "w", encoding="utf-8")
+        write_index = 1
+
         def _on_new_segment(segment) -> None:
+            nonlocal write_index
             if cancel is not None and cancel.is_set():
                 raise _Cancelled()
-            if on_segment is not None:
-                text = segment.text.strip()
-                if text:
-                    start = _format_log_timestamp(segment.t0 / 100.0)
-                    end = _format_log_timestamp(segment.t1 / 100.0)
-                    on_segment(f"[{start} --> {end}] {text}")
+            text = segment.text.strip()
+            if text and on_segment is not None:
+                start = _format_log_timestamp(segment.t0 / 100.0)
+                end = _format_log_timestamp(segment.t1 / 100.0)
+                on_segment(f"[{start} --> {end}] {text}")
+            if text and part_file is not None:
+                entry = format_srt_entry(write_index, segment.t0 / 100.0, segment.t1 / 100.0, text)
+                part_file.write(("\n" if write_index > 1 else "") + entry)
+                part_file.flush()
+            if text:
+                write_index += 1
             if on_file_progress is not None and duration:
                 on_file_progress(min(segment.t1 / 100.0 / duration, 1.0))
 
@@ -318,7 +330,11 @@ def transcribe_video(
         except Exception:
             logging.debug("Language detection failed for %s", video_path.name, exc_info=True)
 
-    raw_segs = model.transcribe(str(video_path), language=language or "", **extra)
+    try:
+        raw_segs = model.transcribe(str(video_path), language=language or "", **extra)
+    finally:
+        if part_file is not None:
+            part_file.close()
     segments = _raw_to_dicts(raw_segs)
     return segments_to_srt(segments)
 
@@ -445,7 +461,7 @@ def process_directory(
             _file_progress(0.0)
             _emit("start", index, video_path)
 
-            if srt_path.exists() and not force:
+            if srt_path.exists() and srt_path.stat().st_size > 0 and not force:
                 logging.info("SKIP  %s", video_path)
                 skipped += 1
                 bar.n = index
@@ -462,18 +478,21 @@ def process_directory(
                 "%s: size=%s duration=%s", video_path.name, format_size_mb(size), duration_str
             )
             t_file = time.monotonic()
+            part_path = srt_path.with_name(srt_path.name + ".part")
             try:
                 srt_content = transcribe_video(
                     video_path,
                     model=model,
                     language=language,
+                    part_path=part_path,
                     cancel=cancel,
                     on_segment=on_segment,
                     on_file_progress=_file_progress,
                     duration=duration,
                     n_threads=effective_threads,
                 )
-                srt_path.write_text(srt_content, encoding="utf-8")
+                part_path.write_text(srt_content, encoding="utf-8")
+                os.replace(part_path, srt_path)
                 logging.info(
                     "DONE  %s -> %s (%.1fs)",
                     video_path.name, srt_path.name, time.monotonic() - t_file,

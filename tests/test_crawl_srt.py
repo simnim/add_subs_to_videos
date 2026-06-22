@@ -849,6 +849,69 @@ class TestTranscribeVideo:
         )
         assert fractions == []
 
+    def test_part_path_written_incrementally_before_transcribe_returns(
+        self, tmp_path, mock_transcribe
+    ):
+        part_path = tmp_path / "clip.srt.part"
+        seen_after_first: list[str] = []
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            seen_after_first.append(part_path.read_text(encoding="utf-8"))
+            new_segment_callback(mock_transcribe.raw_segs[1])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        transcribe_video(video, model=mock_transcribe.model, language=None, part_path=part_path)
+
+        assert "Hello world" in seen_after_first[0]
+        assert "How are you" not in seen_after_first[0]
+        final_content = part_path.read_text(encoding="utf-8")
+        assert "Hello world" in final_content
+        assert "How are you" in final_content
+
+    def test_part_path_retains_partial_content_on_exception(self, tmp_path, mock_transcribe):
+        part_path = tmp_path / "clip.srt.part"
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            raise RuntimeError("boom")
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        with pytest.raises(RuntimeError):
+            transcribe_video(video, model=mock_transcribe.model, language=None, part_path=part_path)
+
+        assert "Hello world" in part_path.read_text(encoding="utf-8")
+
+    def test_part_path_retains_partial_content_on_cancel(self, tmp_path, mock_transcribe):
+        import threading
+
+        part_path = tmp_path / "clip.srt.part"
+        cancel = threading.Event()
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            cancel.set()
+            new_segment_callback(mock_transcribe.raw_segs[1])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        with pytest.raises(_Cancelled):
+            transcribe_video(
+                video, model=mock_transcribe.model, language=None, part_path=part_path, cancel=cancel
+            )
+
+        assert "Hello world" in part_path.read_text(encoding="utf-8")
+
 
 # ---------------------------------------------------------------------------
 # process_directory
@@ -1001,6 +1064,40 @@ class TestProcessDirectory:
         mock_transcribe.model.transcribe.assert_called_once()
         assert srt.read_text(encoding="utf-8") != "old content"
 
+    def test_existing_empty_srt_redone_without_force(self, tmp_path, mock_transcribe):
+        video = tmp_path / "clip.mp4"
+        video.touch()
+        srt = tmp_path / "clip.srt"
+        srt.write_text("", encoding="utf-8")
+
+        process_directory(tmp_path, **_COMMON_KWARGS)
+
+        mock_transcribe.model.transcribe.assert_called_once()
+        assert srt.read_text(encoding="utf-8") != ""
+
+    def test_srt_write_leaves_no_part_file_on_success(self, tmp_path, mock_transcribe):
+        (tmp_path / "clip.mp4").touch()
+        process_directory(tmp_path, **_COMMON_KWARGS)
+        assert not list(tmp_path.glob("*.srt.part"))
+
+    def test_part_file_shows_partial_content_during_transcription(self, tmp_path, mock_transcribe):
+        part_path = tmp_path / "clip.srt.part"
+        seen_after_first: list[str] = []
+
+        def fake_transcribe(media, language="", new_segment_callback=None, **kwargs):
+            new_segment_callback(mock_transcribe.raw_segs[0])
+            seen_after_first.append(part_path.read_text(encoding="utf-8"))
+            new_segment_callback(mock_transcribe.raw_segs[1])
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        (tmp_path / "clip.mp4").touch()
+
+        process_directory(tmp_path, **_COMMON_KWARGS)
+
+        assert "Hello world" in seen_after_first[0]
+        assert "How are you" not in seen_after_first[0]
+
     def test_failed_file_does_not_abort_batch(self, tmp_path, mock_transcribe):
         (tmp_path / "a.mp4").touch()
         (tmp_path / "b.mp4").touch()
@@ -1095,7 +1192,7 @@ class TestProcessDirectory:
 
     def test_skipped_reflected_in_summary(self, tmp_path, mock_transcribe, capsys):
         (tmp_path / "clip.mp4").touch()
-        (tmp_path / "clip.srt").touch()
+        (tmp_path / "clip.srt").write_text("existing content", encoding="utf-8")
         process_directory(tmp_path, **_COMMON_KWARGS)
         out = capsys.readouterr().out
         assert "0 transcribed" in out
@@ -1222,7 +1319,7 @@ class TestProcessDirectory:
         self, tmp_path, mock_transcribe, fake_tqdm
     ):
         (tmp_path / "a.mp4").touch()
-        (tmp_path / "a.srt").touch()
+        (tmp_path / "a.srt").write_text("existing content", encoding="utf-8")
         (tmp_path / "b.mp4").touch()
         mock_transcribe.model.transcribe.side_effect = RuntimeError("boom")
 
@@ -1240,7 +1337,7 @@ class TestProcessDirectory:
         ok.touch()
         skipped = tmp_path / "b.mp4"
         skipped.touch()
-        (tmp_path / "b.srt").touch()
+        (tmp_path / "b.srt").write_text("existing content", encoding="utf-8")
         failed = tmp_path / "c.mp4"
         failed.touch()
 

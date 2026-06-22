@@ -12,18 +12,21 @@ def format_srt_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def format_srt_entry(index: int, start: float, end: float, text: str) -> str:
+    start_ts = format_srt_timestamp(start)
+    end_ts = format_srt_timestamp(end)
+    return f"{index}\n{start_ts} --> {end_ts}\n{text}\n"
+
+
 def segments_to_srt(segments: list[dict]) -> str:
-    lines: list[str] = []
+    parts: list[str] = []
     index = 1
     for seg in segments:
         text = seg["text"].strip()
         if not text:
             continue
-        start_ts = format_srt_timestamp(seg["start"])
-        end_ts = format_srt_timestamp(seg["end"])
-        lines.append(str(index))
-        lines.append(f"{start_ts} --> {end_ts}")
-        lines.append(text)
-        lines.append("")
+        if parts:
+            parts.append("\n")
+        parts.append(format_srt_entry(index, seg["start"], seg["end"], text))
         index += 1
-    return "\n".join(lines)
+    return "".join(parts)
