@@ -14,7 +14,7 @@ https://github.com/simnim/add_subs_to_videos
 
 <img src="https://github.com/simnim/add_subs_to_videos/raw/main/assets/screenshots/gui-running.png?raw=true" width="480" alt="GUI – transcription in progress">
 
-Drag a folder (or single video) onto the window, pick Model/Language/Threads, optionally check "Force re-run" or "Debug logging", then hit Run — overall and per-file progress bars and a live transcription log appear, with a Cancel button to stop mid-run.
+Drag a folder (or single video) onto the window then hit Run. Includes Handy progress bars model download and live transcription logs per episode.
 
 ## Install
 
@@ -39,10 +39,11 @@ pipx install "add-subs-to-videos[gui]"
 ```
 This installs both the `add_subs_to_videos` CLI and the `add-subs-to-videos-gui` GUI entry point. Drop `[gui]` if you only want the CLI.
 
-> `pywhispercpp` compiles a C++ extension at install time (requires CMake — `brew install cmake ffmpeg` on macOS, or on Ubuntu/Debian `sudo apt install cmake ffmpeg`). `ffmpeg`/`ffprobe` are also needed at runtime to decode non-WAV media and show per-file progress. On Linux with CUDA:
+> `pywhispercpp` compiles a C++ extension at install time (requires CMake — `brew install cmake ffmpeg` on macOS, or on Ubuntu/Debian `sudo apt install cmake ffmpeg`). `ffmpeg`/`ffprobe` are also needed at runtime to decode non-WAV media and show per-file progress. On Linux with an NVIDIA GPU, set `WHISPER_CUDA=1` to compile with CUDA support instead of falling back to CPU:
 > ```bash
-> WHISPER_CUDA=1 pip install "add-subs-to-videos[gui]"
+> WHISPER_CUDA=1 pip install "add-subs-to-videos[gui]" --no-cache-dir
 > ```
+> Requires the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) (`nvcc` on `PATH`) already installed. `--no-cache-dir` forces a rebuild — without it, pip may reuse a cached non-CUDA wheel from a previous install. If you already installed without `WHISPER_CUDA=1`, reinstall with `--force-reinstall --no-cache-dir` to pick up the flag.
 
 ## Usage
 
