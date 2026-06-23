@@ -4,14 +4,22 @@ adopt-info: add-subs-to-videos
 summary: Recursive video-to-SRT transcription using whisper.cpp
 description: |
   Crawls a directory recursively, transcribes every video it finds using
-  whisper.cpp (on-device, fully private) and writes an .srt sidecar file
-  next to each one. Already-transcribed files are skipped, so re-running
-  is fast and safe.
+  whisper.cpp (on-device, fully private — nothing is uploaded anywhere)
+  and writes an .srt sidecar file next to each one. Already-transcribed
+  files are skipped, so re-running is fast and safe.
+
+  While a file is transcribing, segments stream into a growing .srt.part
+  file so progress is never lost; it's atomically promoted to .srt on
+  success, so a crash or cancellation never corrupts a finished subtitle.
 
   Supports .mp4, .mkv, .avi, .mov, .m4v, .webm, .ts, .flv, and more.
 
   Provides both the `add-subs-to-videos` CLI command and an "Add Subs to
-  Videos" desktop GUI launcher (drag-and-drop, progress, log).
+  Videos" desktop GUI launcher. The GUI offers drag-and-drop, a file table
+  with live per-file status (Pending/Processing/Done/Skipped/Failed) and a
+  clickable log icon per row, a model dropdown showing download progress,
+  and auto re-run every 10 minutes so it can be left running unattended to
+  pick up new files as they appear.
 
   Usage:
     add-subs-to-videos /path/to/videos

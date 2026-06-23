@@ -29,12 +29,17 @@ uv run add_subs_to_videos /path/to/videos --model large-v3
 # Pin language, force re-run
 uv run add_subs_to_videos /path/to/videos --model medium --language en --force
 
+# Limit CPU threads (default: all available cores)
+uv run add_subs_to_videos /path/to/videos --threads 4
+
 # Quiet (warnings/summary only) or verbose (debug incl. detected language) output
 uv run add_subs_to_videos /path/to/videos --quiet
 uv run add_subs_to_videos /path/to/videos --verbose
 ```
 
 Output: a `.srt` file placed next to each video (e.g. `movie.mp4` → `movie.srt`). Existing `.srt` files are skipped unless `--force` is passed. `--quiet`/`-q` and `--verbose`/`-v` are mutually exclusive (`cli.py`'s `build_parser`); quiet sets log level to `WARNING` and disables the progress bar, verbose sets `DEBUG`.
+
+While a file is transcribing, segments stream incrementally into a `movie.srt.part` sidecar next to the eventual `movie.srt`, so the file is a growing, valid SRT mid-run; on success it's atomically renamed to `movie.srt`. A stray `.part` left by a cancelled/interrupted run is never resumed — a later run on that file re-transcribes from scratch and overwrites it. Files with a completed `.srt` are still skipped unless `--force`.
 
 The `directory` argument is optional if a `directory` is saved in config (see Configuration below); otherwise the CLI errors asking for one.
 
@@ -44,15 +49,35 @@ The `directory` argument is optional if a `directory` is saved in config (see Co
 uv run add-subs-to-videos-gui
 ```
 
-A drag-and-drop window (`gui.py`: `MainWindow`/`DropZone`) for picking a folder or video file, choosing model/language/force options, and watching live overall + per-file progress bars and a transcription log, with a Cancel button. It runs `process_directory` on a background `QThread` (`_WorkerThread`), wiring its `on_progress`/`on_segment`/`on_file_progress` callbacks to Qt signals and forwarding `logging`/stdout output to the on-screen log via a custom `logging.Handler`.
+A drag-and-drop window (`gui.py`: `MainWindow`/`DropZone`) for picking a folder or video file, choosing model/language/threads/force options, and watching live overall + per-file progress bars and a transcription log, with a Cancel button. A file table lists every discovered video with a live status (Pending/Processing/Done/Skipped/Failed) and a clickable log icon per row that opens that file's transcript/log output. Other controls: a threads spinbox, a "Force re-run" checkbox, and a "Debug logging" checkbox.
+
+It runs `process_directory` on a background `QThread` (`_WorkerThread`), wiring its `on_progress`/`on_segment`/`on_file_progress` callbacks to Qt signals and forwarding `logging`/stdout output to the on-screen log via a custom `logging.Handler`.
+
+**Auto re-run:** once a run finishes (and wasn't cancelled), the Run button relabels to a countdown — "Run (auto re-run in M:SS)" — and automatically rescans the folder and re-runs after 10 minutes, so it can be left running unattended to pick up new files as they appear. Clicking Cancel during the countdown stops it.
 
 ## Configuration
 
-`config.py` persists user preferences (`model`, `language`, `directory`) as TOML at `$XDG_CONFIG_HOME/add-subs-to-videos/config.toml` (defaults to `~/.config/...`). Both the CLI (`load_config()` feeds `argparse` defaults via `set_defaults`) and the GUI (loaded on startup; saved on folder selection and window close) read and write this same file — so, e.g., picking a folder in the GUI lets you omit `directory` on a subsequent CLI run, and vice versa.
+`config.py` persists user preferences (`model`, `language`, `directory`, `threads`) as TOML at `$XDG_CONFIG_HOME/add-subs-to-videos/config.toml` (defaults to `~/.config/...`). Both the CLI (`load_config()` feeds `argparse` defaults via `set_defaults`) and the GUI (loaded on startup; saved on folder selection and window close) read and write this same file — so, e.g., picking a folder in the GUI lets you omit `directory` on a subsequent CLI run, and vice versa.
+
+## Testing
+
+```bash
+uv sync --group dev --extra gui       # install dev + GUI deps (pytest, pytest-qt, etc.)
+uv run pytest tests/ -m "not integration"   # fast unit tests
+uv run pytest tests/ -m integration         # slow end-to-end tests against bundled audio in tests/demo-audio/
+```
+
+`tests/` has one test file per module (`test_cli_main.py`, `test_config.py`, `test_crawl_srt.py`, `test_gui.py`, `test_integration.py`, `test_main_entrypoint.py`, `test_runtime_paths.py`) plus `conftest.py`. GUI tests use `pytest-qt`; integration tests use `pytest-forked` on Linux CI to isolate native crashes (whisper.cpp segfaults shouldn't take down the whole test run).
+
+No lint/type-check tooling is configured (no ruff/mypy/pre-commit) — pytest is the only check to run.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR to `main`: matrix `[ubuntu-latest, macos-latest]`, installs system deps (ffmpeg/cmake/Qt libs on Linux via `apt`, ffmpeg/cmake on macOS via `brew`), then runs the same two pytest commands as above. This is the gate to satisfy before pushing.
 
 ## Publishing
 
-Releases are triggered by creating a GitHub Release. Two workflows fire automatically:
+Releases are triggered by creating a GitHub Release. `scripts/release.sh` is the helper script for cutting one. Three workflows fire automatically:
 
 - **`.github/workflows/publish.yml`** — builds a wheel with `uv build` and uploads to PyPI using the `PYPI_TOKEN` secret (or OIDC trusted publishing with `--trusted-publishing always`)
 - **`.github/workflows/snap.yml`** — builds the snap with `snapcore/action-build` and publishes to the Snap Store using the `SNAPCRAFT_STORE_CREDENTIALS` secret
@@ -85,13 +110,25 @@ On macOS, Metal is auto-detected by whisper.cpp — no extra steps needed.
 
 ```
 src/add_subs_to_videos/
-├── __main__.py   # Enables `python -m add_subs_to_videos`
-├── cli.py        # Argument parsing, entry point
-├── config.py     # Shared TOML settings persistence (~/.config/add-subs-to-videos/config.toml)
-├── files.py      # Recursive video file discovery
-├── gui.py        # PySide6 desktop app (drag-and-drop, progress, log) wrapping process_directory
-├── srt.py        # SRT timestamp formatting and segment serialization
-└── transcribe.py # Core pipeline: whisper.cpp transcription
+├── __main__.py     # Enables `python -m add_subs_to_videos`
+├── cli.py          # Argument parsing, entry point
+├── config.py       # Shared TOML settings persistence (~/.config/add-subs-to-videos/config.toml)
+├── files.py        # Recursive video file discovery
+├── gui.py          # PySide6 desktop app (drag-and-drop, progress, log) wrapping process_directory
+├── runtime_paths.py # Locates bundled ffmpeg when running from a PyInstaller bundle
+├── srt.py          # SRT timestamp formatting and segment serialization
+└── transcribe.py   # Core pipeline: whisper.cpp transcription
+
+tests/
+├── conftest.py
+├── demo-audio/            # Bundled audio fixture for integration tests
+├── test_cli_main.py
+├── test_config.py
+├── test_crawl_srt.py
+├── test_gui.py
+├── test_integration.py
+├── test_main_entrypoint.py
+└── test_runtime_paths.py
 ```
 
 `assets/icon.svg` provides the GUI's app icon — located at runtime by `gui.py`'s `_dev_icon_path()` and bundled via `snap/snapcraft.yaml`. `assets/add-subs-to-videos-gui.desktop` provides the Linux desktop entry for the GUI launcher.
