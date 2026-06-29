@@ -456,6 +456,7 @@ class TestMainWindow:
             "language": window._lang_combo.currentData(),
             "directory": str(tmp_path),
             "threads": window._threads_spin.value(),
+            "auto_rerun": window._auto_rerun_check.isChecked(),
         })
 
     def test_folder_dropped_shows_clear_button(self, window, tmp_path):
@@ -481,6 +482,7 @@ class TestMainWindow:
             "language": window._lang_combo.currentData() or "",
             "directory": "",
             "threads": window._threads_spin.value(),
+            "auto_rerun": window._auto_rerun_check.isChecked(),
         })
 
     def test_clear_button_hidden_initially(self, window):
@@ -531,6 +533,7 @@ class TestMainWindow:
             "language": "fr",
             "directory": str(tmp_path),
             "threads": 2,
+            "auto_rerun": window._auto_rerun_check.isChecked(),
         })
 
     def test_load_prefs_sets_threads(self, mocker, qtbot):
@@ -842,6 +845,22 @@ class TestMainWindow:
         window._drop_zone.folder_dropped.emit(tmp_path)
         window._on_done(True)
         window._clear_selection()
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run"
+
+    def test_auto_rerun_checkbox_checked_by_default(self, window):
+        assert window._auto_rerun_check.isChecked()
+
+    def test_on_done_with_auto_rerun_disabled_does_not_start_countdown(self, window):
+        window._auto_rerun_check.setChecked(False)
+        window._on_done(True)
+        assert not window._rerun_timer.isActive()
+        assert window._run_btn.text() == "Run"
+
+    def test_unchecking_auto_rerun_during_countdown_stops_it(self, window):
+        window._on_done(True)
+        assert window._rerun_timer.isActive()
+        window._auto_rerun_check.setChecked(False)
         assert not window._rerun_timer.isActive()
         assert window._run_btn.text() == "Run"
 

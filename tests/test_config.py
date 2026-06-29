@@ -163,6 +163,18 @@ class TestSaveConfig:
         cfg_file.write_text('foo = "bar"\nbaz = "qux"\n', encoding="utf-8")
         assert load_config() == {}
 
+    def test_bool_true_round_trips(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        save_config({"auto_rerun": True})
+        result = load_config()
+        assert result["auto_rerun"] is True
+
+    def test_bool_false_round_trips(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        save_config({"auto_rerun": False})
+        result = load_config()
+        assert result["auto_rerun"] is False
+
     def test_threads_round_trips_as_int(self, monkeypatch, tmp_path):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         save_config({"model": "small", "threads": 6})

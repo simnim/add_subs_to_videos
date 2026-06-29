@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -116,6 +117,15 @@ def _emoji_icon(emoji: str, size: int = 16) -> QIcon:
     painter.end()
     return QIcon(pixmap)
 
+def _focus_glow() -> QGraphicsDropShadowEffect:
+    """Blue glow ring used as a focus indicator — tight blur so it reads as a border."""
+    effect = QGraphicsDropShadowEffect()
+    effect.setBlurRadius(6)
+    effect.setOffset(0, 0)
+    effect.setColor(QColor("#1565C0"))
+    return effect
+
+
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
 _LANGUAGES: list[tuple[str, str]] = [
@@ -201,6 +211,7 @@ class DropZone(QFrame):
         self.setMinimumHeight(120)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setStyleSheet(self._STYLE)
         self._folder_path: Path | None = None
 
@@ -336,12 +347,29 @@ class DropZone(QFrame):
                 self.set_folder(path)
                 self.folder_dropped.emit(path)
 
-    def mousePressEvent(self, event) -> None:
+    def focusInEvent(self, event) -> None:
+        self.setGraphicsEffect(_focus_glow())
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.setGraphicsEffect(None)
+        super().focusOutEvent(event)
+
+    def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select folder")
         if folder:
             path = Path(folder)
             self.set_folder(path)
             self.folder_dropped.emit(path)
+
+    def mousePressEvent(self, event) -> None:
+        self._browse()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self._browse()
+        else:
+            super().keyPressEvent(event)
 
 
 class _FileScanThread(QThread):
@@ -458,7 +486,7 @@ class MainWindow(QMainWindow):
     _RUN_BTN_STYLE = (
         "QPushButton:enabled {"
         "  background: #D6EAFB;"
-        "  border: 1px solid #2E8B57;"
+        "  border: 2px solid #2E8B57;"
         "  border-radius: 6px;"
         "}"
         "QPushButton:disabled {"
@@ -479,7 +507,7 @@ class MainWindow(QMainWindow):
     _CANCEL_BTN_STYLE_ACTIVE = (
         "QPushButton {"
         "  background: palette(button);"
-        "  border: 1px solid #C0392B;"
+        "  border: 2px solid #C0392B;"
         "  border-radius: 6px;"
         "  color: #C0392B;"
         "}"
@@ -517,6 +545,7 @@ class MainWindow(QMainWindow):
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.clicked.connect(self._clear_selection)
         self._clear_btn.setHidden(True)
+        self._clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
@@ -543,6 +572,7 @@ class MainWindow(QMainWindow):
         self._overall_bar.setValue(0)
         self._overall_bar.setFormat("Ready")
         self._overall_bar.setMaximumHeight(22)
+        self._overall_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         progress_layout.addWidget(self._overall_bar)
 
         self._file_bar = QProgressBar()
@@ -550,6 +580,7 @@ class MainWindow(QMainWindow):
         self._file_bar.setValue(0)
         self._file_bar.setFormat("")
         self._file_bar.setMaximumHeight(22)
+        self._file_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         progress_layout.addWidget(self._file_bar)
 
         layout.addWidget(progress_frame)
@@ -591,6 +622,7 @@ class MainWindow(QMainWindow):
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._file_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
         self._file_table.cellClicked.connect(self._on_file_table_cell_clicked)
@@ -653,6 +685,11 @@ class MainWindow(QMainWindow):
         opts.addWidget(self._force_check)
         self._debug_check = QCheckBox("Debug logging")
         opts.addWidget(self._debug_check)
+        self._auto_rerun_check = QCheckBox("Auto re-run")
+        self._auto_rerun_check.setChecked(True)
+        self._auto_rerun_check.setToolTip("Automatically re-scan and re-run every 10 minutes after a successful run")
+        self._auto_rerun_check.stateChanged.connect(self._on_auto_rerun_toggled)
+        opts.addWidget(self._auto_rerun_check)
         opts.addStretch()
         layout.addLayout(opts)
 
@@ -662,12 +699,14 @@ class MainWindow(QMainWindow):
         self._run_btn.setMinimumHeight(36)
         self._run_btn.setStyleSheet(self._RUN_BTN_STYLE)
         self._run_btn.clicked.connect(self._run)
+        self._run_btn.installEventFilter(self)
         btn_row.addWidget(self._run_btn)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setMinimumHeight(36)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._cancel_btn.clicked.connect(self._cancel_run)
+        self._cancel_btn.installEventFilter(self)
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
 
@@ -677,6 +716,15 @@ class MainWindow(QMainWindow):
 
         self._load_prefs()
         self._refresh_model_status_icon()
+        QTimer.singleShot(0, self._run_btn.setFocus)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj in (self._run_btn, self._cancel_btn):
+            if event.type() == QEvent.Type.FocusIn:
+                obj.setGraphicsEffect(_focus_glow())
+            elif event.type() == QEvent.Type.FocusOut:
+                obj.setGraphicsEffect(None)
+        return super().eventFilter(obj, event)
 
     def _load_prefs(self) -> None:
         cfg = load_config()
@@ -685,6 +733,7 @@ class MainWindow(QMainWindow):
         idx = self._lang_combo.findData(saved_lang)
         self._lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._threads_spin.setValue(cfg.get("threads", default_n_threads()))
+        self._auto_rerun_check.setChecked(cfg.get("auto_rerun", True))
         directory = cfg.get("directory", "")
         if directory and Path(directory).exists():
             path = Path(directory)
@@ -701,6 +750,7 @@ class MainWindow(QMainWindow):
             "language": self._lang_combo.currentData() or "",
             "directory": str(self._folder) if self._folder else "",
             "threads": self._threads_spin.value(),
+            "auto_rerun": self._auto_rerun_check.isChecked(),
         })
 
     def _refresh_model_status_icon(self) -> None:
@@ -734,6 +784,7 @@ class MainWindow(QMainWindow):
         self._clear_btn.setHidden(False)
         self._save_prefs()
         self._start_tree_scan(path)
+        self._run_btn.setFocus()
 
     def _clear_selection(self) -> None:
         self._folder = None
@@ -950,6 +1001,7 @@ class MainWindow(QMainWindow):
     def _cancel_run(self) -> None:
         if self._rerun_timer.isActive():
             self._stop_rerun_countdown()
+            self._run_btn.setFocus()
             return
         if self._pending_run:
             self._pending_run = False
@@ -958,6 +1010,7 @@ class MainWindow(QMainWindow):
             self._cancel_btn.setEnabled(False)
             self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
             self._status_label.setText("Cancelled")
+            self._run_btn.setFocus()
             return
         self._cancel_requested = True
         if self._worker:
@@ -979,6 +1032,10 @@ class MainWindow(QMainWindow):
         self._run_btn.setText("Run")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+
+    def _on_auto_rerun_toggled(self, _state: int) -> None:
+        if not self._auto_rerun_check.isChecked() and self._rerun_timer.isActive():
+            self._stop_rerun_countdown()
 
     def _update_rerun_button_text(self) -> None:
         mins, secs = divmod(max(self._rerun_seconds_left, 0), 60)
@@ -1002,6 +1059,7 @@ class MainWindow(QMainWindow):
         self._run_btn.setText("Running")
         self._cancel_btn.setEnabled(True)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_ACTIVE)
+        self._cancel_btn.setFocus()
         self._final_event = None
         self._current_video_index = 0
         self._current_total = 0
@@ -1039,6 +1097,7 @@ class MainWindow(QMainWindow):
         self._run_btn.setText("Run")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
+        self._run_btn.setFocus()
         self._refresh_model_status_icon()
         if self._final_event is not None:
             e = self._final_event
@@ -1061,7 +1120,7 @@ class MainWindow(QMainWindow):
             self._overall_bar.setFormat(label)
             self._file_bar.setValue(0)
             self._file_bar.setFormat("")
-        if not self._cancel_requested:
+        if not self._cancel_requested and self._auto_rerun_check.isChecked():
             self._start_rerun_countdown()
 
 
