@@ -269,6 +269,7 @@ class DropZone(QFrame):
         subtitle_layout.addWidget(self._path_label)
         layout.addWidget(subtitle_box, 1, 1)
 
+        self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse")
         self.set_folder(None)
 
     def _update_selection_path_label(self, text: str) -> None:
@@ -291,7 +292,7 @@ class DropZone(QFrame):
         self._folder_path = path
         if path is None:
             self.setStyleSheet(self._STYLE)
-            self.setToolTip("")
+            self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse")
             self._selection_name_label.setVisible(False)
             self._selection_name_label.setText("")
             self._selection_path_label.setVisible(False)
@@ -558,6 +559,7 @@ class MainWindow(QMainWindow):
         self._clear_btn.clicked.connect(self._clear_selection)
         self._clear_btn.setHidden(True)
         self._clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._clear_btn.setToolTip("Clear the selected folder (start over)")
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
@@ -675,6 +677,7 @@ class MainWindow(QMainWindow):
             self._model_combo.addItem(m)
         self._model_combo.setCurrentText("medium")
         self._model_combo.currentTextChanged.connect(self._refresh_model_status_icon)
+        self._model_combo.setToolTip("Whisper model — larger = more accurate but slower; ✓ = cached, ↓ = will download")
         opts.addWidget(self._model_combo)
         self._model_status_icon = QLabel()
         opts.addWidget(self._model_status_icon)
@@ -685,17 +688,21 @@ class MainWindow(QMainWindow):
         for code, name in _LANGUAGES:
             self._lang_combo.addItem(f"{name} ({code})", code)
         self._lang_combo.setMinimumWidth(160)
+        self._lang_combo.setToolTip("Transcription language (Auto-detect lets Whisper choose per file)")
         opts.addWidget(self._lang_combo)
         opts.addSpacing(16)
         opts.addWidget(QLabel("Threads:"))
         self._threads_spin = QSpinBox()
         self._threads_spin.setRange(1, default_n_threads())
         self._threads_spin.setValue(default_n_threads())
+        self._threads_spin.setToolTip("Number of CPU threads for transcription (default: all available cores)")
         opts.addWidget(self._threads_spin)
         opts.addSpacing(16)
         self._force_check = QCheckBox("Force re-run")
+        self._force_check.setToolTip("Re-transcribe files that already have a .srt (otherwise they are skipped)")
         opts.addWidget(self._force_check)
         self._debug_check = QCheckBox("Debug logging")
+        self._debug_check.setToolTip("Show debug-level log output in the transcript panel")
         opts.addWidget(self._debug_check)
         self._auto_rerun_check = QCheckBox("Auto re-run")
         self._auto_rerun_check.setChecked(True)
@@ -711,12 +718,14 @@ class MainWindow(QMainWindow):
         self._run_btn.setMinimumHeight(36)
         self._run_btn.setStyleSheet(self._RUN_BTN_STYLE)
         self._run_btn.clicked.connect(self._run)
+        self._run_btn.setToolTip("Start transcription — keyboard shortcut: Enter")
         btn_row.addWidget(self._run_btn)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setMinimumHeight(36)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._cancel_btn.clicked.connect(self._cancel_run)
+        self._cancel_btn.setToolTip("Cancel the current run or stop the auto re-run countdown — keyboard shortcut: Escape")
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
 
@@ -730,6 +739,17 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._run_btn.setFocus()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._run_btn.isEnabled():
+                self._run()
+                return
+        elif event.key() == Qt.Key.Key_Escape:
+            if self._cancel_btn.isEnabled():
+                self._cancel_run()
+                return
+        super().keyPressEvent(event)
 
     def _load_prefs(self) -> None:
         cfg = load_config()
