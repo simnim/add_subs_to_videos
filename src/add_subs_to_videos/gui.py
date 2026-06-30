@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -116,15 +115,6 @@ def _emoji_icon(emoji: str, size: int = 16) -> QIcon:
     painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
     painter.end()
     return QIcon(pixmap)
-
-def _focus_glow() -> QGraphicsDropShadowEffect:
-    """Blue glow ring used as a focus indicator — tight blur so it reads as a border."""
-    effect = QGraphicsDropShadowEffect()
-    effect.setBlurRadius(6)
-    effect.setOffset(0, 0)
-    effect.setColor(QColor("#1565C0"))
-    return effect
-
 
 # whisper.cpp's canonical (code, English name) language table —
 # mirrors Model.available_languages() / whisper_lang_str ordering.
@@ -348,12 +338,25 @@ class DropZone(QFrame):
                 self.folder_dropped.emit(path)
 
     def focusInEvent(self, event) -> None:
-        self.setGraphicsEffect(_focus_glow())
+        self.update()
         super().focusInEvent(event)
 
     def focusOutEvent(self, event) -> None:
-        self.setGraphicsEffect(None)
+        self.update()
         super().focusOutEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.hasFocus():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = painter.pen()
+            pen.setColor(QColor("#1565C0"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(self.rect().adjusted(3, 3, -3, -3), 9, 9)
+            painter.end()
 
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select folder")
@@ -489,6 +492,9 @@ class MainWindow(QMainWindow):
         "  border: 2px solid #2E8B57;"
         "  border-radius: 6px;"
         "}"
+        "QPushButton:enabled:focus {"
+        "  border: 2px solid #1565C0;"
+        "}"
         "QPushButton:disabled {"
         "  background: palette(button);"
         "  border: 1px solid palette(mid);"
@@ -503,6 +509,9 @@ class MainWindow(QMainWindow):
         "  border-radius: 6px;"
         "  color: palette(button-text);"
         "}"
+        "QPushButton:focus {"
+        "  border: 2px solid #1565C0;"
+        "}"
     )
     _CANCEL_BTN_STYLE_ACTIVE = (
         "QPushButton {"
@@ -510,6 +519,9 @@ class MainWindow(QMainWindow):
         "  border: 2px solid #C0392B;"
         "  border-radius: 6px;"
         "  color: #C0392B;"
+        "}"
+        "QPushButton:focus {"
+        "  border: 2px solid #1565C0;"
         "}"
     )
 
@@ -699,14 +711,12 @@ class MainWindow(QMainWindow):
         self._run_btn.setMinimumHeight(36)
         self._run_btn.setStyleSheet(self._RUN_BTN_STYLE)
         self._run_btn.clicked.connect(self._run)
-        self._run_btn.installEventFilter(self)
         btn_row.addWidget(self._run_btn)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setMinimumHeight(36)
         self._cancel_btn.setStyleSheet(self._CANCEL_BTN_STYLE_IDLE)
         self._cancel_btn.clicked.connect(self._cancel_run)
-        self._cancel_btn.installEventFilter(self)
         btn_row.addWidget(self._cancel_btn)
         layout.addLayout(btn_row)
 
@@ -717,14 +727,6 @@ class MainWindow(QMainWindow):
         self._load_prefs()
         self._refresh_model_status_icon()
         QTimer.singleShot(0, self._run_btn.setFocus)
-
-    def eventFilter(self, obj, event) -> bool:
-        if obj in (self._run_btn, self._cancel_btn):
-            if event.type() == QEvent.Type.FocusIn:
-                obj.setGraphicsEffect(_focus_glow())
-            elif event.type() == QEvent.Type.FocusOut:
-                obj.setGraphicsEffect(None)
-        return super().eventFilter(obj, event)
 
     def _load_prefs(self) -> None:
         cfg = load_config()
