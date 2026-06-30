@@ -1170,8 +1170,69 @@ class TestMainWindow:
     def test_file_table_single_selection_mode(self, window):
         assert window._file_table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
 
-    def test_file_table_strong_focus_policy(self, window):
-        assert window._file_table.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    def test_file_table_no_focus_policy(self, window):
+        assert window._file_table.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+
+# ---------------------------------------------------------------------------
+# Tab cycling
+# ---------------------------------------------------------------------------
+
+
+class TestTabCycling:
+    @pytest.fixture
+    def window(self, qtbot):
+        w = MainWindow()
+        qtbot.addWidget(w)
+        return w
+
+    def test_tab_excluded_widgets_have_no_focus_policy(self, window):
+        for widget in (
+            window._file_table,
+            window._clear_btn,
+            window._overall_bar,
+            window._file_bar,
+        ):
+            assert widget.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+    def test_tab_included_widgets_have_focus_policy(self, window):
+        for widget in (
+            window._drop_zone,
+            window._model_combo,
+            window._lang_combo,
+            window._threads_spin,
+            window._force_check,
+            window._debug_check,
+            window._auto_rerun_check,
+            window._run_btn,
+            window._cancel_btn,
+        ):
+            assert widget.focusPolicy() != Qt.FocusPolicy.NoFocus
+
+    def test_tab_cycle_order(self, window):
+        expected = [
+            window._drop_zone,
+            window._model_combo,
+            window._lang_combo,
+            window._threads_spin,
+            window._force_check,
+            window._debug_check,
+            window._auto_rerun_check,
+            window._run_btn,
+            window._cancel_btn,
+        ]
+        expected_set = set(expected)
+
+        visited = []
+        widget = window._drop_zone
+        for _ in range(200):  # safety limit
+            if widget in expected_set:
+                if visited and widget == window._drop_zone:
+                    break  # completed full cycle
+                visited.append(widget)
+            widget = widget.nextInFocusChain()
+
+        assert visited == expected
 
 
 # ---------------------------------------------------------------------------
