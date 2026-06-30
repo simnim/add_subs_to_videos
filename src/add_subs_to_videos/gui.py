@@ -726,7 +726,10 @@ class MainWindow(QMainWindow):
 
         self._load_prefs()
         self._refresh_model_status_icon()
-        QTimer.singleShot(0, self._run_btn.setFocus)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._run_btn.setFocus()
 
     def _load_prefs(self) -> None:
         cfg = load_config()
