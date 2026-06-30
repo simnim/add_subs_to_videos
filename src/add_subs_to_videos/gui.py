@@ -639,7 +639,7 @@ class MainWindow(QMainWindow):
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._file_table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._file_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._file_table.installEventFilter(self)
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
