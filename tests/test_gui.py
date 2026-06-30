@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtCore import QEvent, Qt, QUrl
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog
 
 from add_subs_to_videos.gui import (
     DropZone,
@@ -1088,6 +1089,89 @@ class TestMainWindow:
         assert window._run_btn.isEnabled()
         assert not window._cancel_btn.isEnabled()
         mock_worker_cls.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # keyPressEvent: Delete / Backspace clears selection
+    # -----------------------------------------------------------------------
+
+    def test_delete_key_clears_selection_when_idle(self, window, tmp_path, mocker):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        mock_clear = mocker.patch.object(window, "_clear_selection")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+        window.keyPressEvent(event)
+        mock_clear.assert_called_once()
+
+    def test_backspace_key_clears_selection_when_idle(self, window, tmp_path, mocker):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        mock_clear = mocker.patch.object(window, "_clear_selection")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier)
+        window.keyPressEvent(event)
+        mock_clear.assert_called_once()
+
+    def test_delete_key_noop_when_cancel_active(self, window, tmp_path, mocker):
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        window._cancel_btn.setEnabled(True)
+        mock_clear = mocker.patch.object(window, "_clear_selection")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+        window.keyPressEvent(event)
+        mock_clear.assert_not_called()
+
+    def test_delete_key_noop_when_clear_hidden(self, window, mocker):
+        mock_clear = mocker.patch.object(window, "_clear_selection")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+        window.keyPressEvent(event)
+        mock_clear.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # eventFilter: Enter / Space on file table opens log dialog
+    # -----------------------------------------------------------------------
+
+    def _setup_one_file_table_row(self, window, tmp_path, mocker):
+        mocker.patch("add_subs_to_videos.gui._FileScanThread")
+        window._drop_zone.folder_dropped.emit(tmp_path)
+        token = window._tree_scan_token
+        window._on_tree_ready(token, [tmp_path / "clip.mp4"])
+        window._file_table.setCurrentCell(0, 0)
+
+    def test_file_table_enter_opens_log_dialog(self, window, tmp_path, mocker):
+        self._setup_one_file_table_row(window, tmp_path, mocker)
+        mock_click = mocker.patch.object(window, "_on_file_table_cell_clicked")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+        result = window.eventFilter(window._file_table, event)
+        assert result is True
+        mock_click.assert_called_once_with(0, 2)
+
+    def test_file_table_space_opens_log_dialog(self, window, tmp_path, mocker):
+        self._setup_one_file_table_row(window, tmp_path, mocker)
+        mock_click = mocker.patch.object(window, "_on_file_table_cell_clicked")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
+        result = window.eventFilter(window._file_table, event)
+        assert result is True
+        mock_click.assert_called_once_with(0, 2)
+
+    def test_file_table_other_key_passes_through(self, window, tmp_path, mocker):
+        self._setup_one_file_table_row(window, tmp_path, mocker)
+        mock_click = mocker.patch.object(window, "_on_file_table_cell_clicked")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)
+        result = window.eventFilter(window._file_table, event)
+        assert result is False
+        mock_click.assert_not_called()
+
+    def test_file_table_enter_noop_when_no_row_selected(self, window, mocker):
+        mock_click = mocker.patch.object(window, "_on_file_table_cell_clicked")
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+        window.eventFilter(window._file_table, event)
+        mock_click.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # File table selection / focus mode
+    # -----------------------------------------------------------------------
+
+    def test_file_table_single_selection_mode(self, window):
+        assert window._file_table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
+
+    def test_file_table_strong_focus_policy(self, window):
+        assert window._file_table.focusPolicy() == Qt.FocusPolicy.StrongFocus
 
 
 # ---------------------------------------------------------------------------

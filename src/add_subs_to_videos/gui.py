@@ -13,8 +13,10 @@ from PySide6.QtGui import (
     QFontDatabase,
     QFontMetrics,
     QIcon,
+    QKeySequence,
     QPainter,
     QPixmap,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -269,7 +271,7 @@ class DropZone(QFrame):
         subtitle_layout.addWidget(self._path_label)
         layout.addWidget(subtitle_box, 1, 1)
 
-        self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse")
+        self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse (Cmd+O / Ctrl+O from anywhere)")
         self.set_folder(None)
 
     def _update_selection_path_label(self, text: str) -> None:
@@ -292,7 +294,7 @@ class DropZone(QFrame):
         self._folder_path = path
         if path is None:
             self.setStyleSheet(self._STYLE)
-            self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse")
+            self.setToolTip("Drop a folder or video file here, or press Enter/Space to browse (Cmd+O / Ctrl+O from anywhere)")
             self._selection_name_label.setVisible(False)
             self._selection_name_label.setText("")
             self._selection_path_label.setVisible(False)
@@ -559,7 +561,7 @@ class MainWindow(QMainWindow):
         self._clear_btn.clicked.connect(self._clear_selection)
         self._clear_btn.setHidden(True)
         self._clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._clear_btn.setToolTip("Clear the selected folder (start over)")
+        self._clear_btn.setToolTip("Clear the selected folder (keyboard: Delete / Backspace)")
         hint_row.addWidget(self._clear_btn)
         layout.addLayout(hint_row)
 
@@ -635,8 +637,10 @@ class MainWindow(QMainWindow):
         self._file_table.setFont(table_font)
         self._file_table.verticalHeader().setVisible(False)
         self._file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self._file_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._file_table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._file_table.installEventFilter(self)
         self._file_table.setShowGrid(True)
         self._file_table.setAlternatingRowColors(True)
         self._file_table.cellClicked.connect(self._on_file_table_cell_clicked)
@@ -652,6 +656,10 @@ class MainWindow(QMainWindow):
             "}"
             "QTableWidget::item {"
             "  padding: 4px 6px;"
+            "}"
+            "QTableWidget::item:selected {"
+            "  background: palette(highlight);"
+            "  color: palette(highlighted-text);"
             "}"
             "QHeaderView::section {"
             "  background: palette(window);"
@@ -736,6 +744,9 @@ class MainWindow(QMainWindow):
         self._load_prefs()
         self._refresh_model_status_icon()
 
+        QShortcut(QKeySequence.StandardKey.Open, self, activated=self._drop_zone._browse)
+        QShortcut(QKeySequence.StandardKey.Quit, self, activated=QApplication.quit)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._run_btn.setFocus()
@@ -749,7 +760,20 @@ class MainWindow(QMainWindow):
             if self._cancel_btn.isEnabled():
                 self._cancel_run()
                 return
+        elif event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if not self._clear_btn.isHidden() and not self._cancel_btn.isEnabled():
+                self._clear_selection()
+                return
         super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._file_table and event.type() == event.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                row = self._file_table.currentRow()
+                if row >= 0:
+                    self._on_file_table_cell_clicked(row, 2)
+                    return True
+        return super().eventFilter(obj, event)
 
     def _load_prefs(self) -> None:
         cfg = load_config()
