@@ -12,10 +12,12 @@ from add_subs_to_videos.transcribe import (
     _Cancelled,
     _capture_native_output,
     _describe_transcription_error,
+    _detect_silences,
     _download_model,
     _format_log_timestamp,
     _probe_duration,
     _raw_to_dicts,
+    _snap_start_to_silence,
     default_n_threads,
     is_model_downloaded,
     model_file_path,
@@ -479,6 +481,100 @@ class TestRawToDicts:
         result = _raw_to_dicts([seg])
         assert result[0]["text"] == "hello  world"
 
+    def test_start_snapped_when_inside_silence(self, mocker):
+        seg = self._make_seg(mocker, t0=100, t1=500, text="hi")  # 1.0s -> 5.0s
+        result = _raw_to_dicts([seg], silences=[(0.5, 4.0)])
+        assert result[0]["start"] == pytest.approx(4.0)
+        assert result[0]["end"] == pytest.approx(5.0)
+
+    def test_start_unchanged_when_no_silences_given(self, mocker):
+        seg = self._make_seg(mocker, t0=100, t1=500, text="hi")
+        result = _raw_to_dicts([seg])
+        assert result[0]["start"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# _snap_start_to_silence
+# ---------------------------------------------------------------------------
+
+
+class TestSnapStartToSilence:
+    def test_start_inside_silence_snaps_to_silence_end(self):
+        assert _snap_start_to_silence(1.0, 5.0, [(0.5, 4.0)]) == 4.0
+
+    def test_start_outside_any_silence_is_unchanged(self):
+        assert _snap_start_to_silence(1.0, 5.0, [(5.5, 6.0)]) == 1.0
+
+    def test_no_silences_leaves_start_unchanged(self):
+        assert _snap_start_to_silence(1.0, 5.0, []) == 1.0
+
+    def test_silence_consuming_whole_segment_leaves_start_unchanged(self):
+        assert _snap_start_to_silence(1.0, 5.0, [(0.5, 6.0)]) == 1.0
+
+    def test_picks_the_containing_interval_among_several(self):
+        silences = [(0.0, 0.5), (0.8, 3.0), (10.0, 11.0)]
+        assert _snap_start_to_silence(1.0, 5.0, silences) == 3.0
+
+    def test_start_exactly_at_silence_start_is_treated_as_inside(self):
+        assert _snap_start_to_silence(0.5, 5.0, [(0.5, 4.0)]) == 4.0
+
+    def test_start_equal_to_silence_end_is_not_inside(self):
+        assert _snap_start_to_silence(4.0, 5.0, [(0.5, 4.0)]) == 4.0
+
+
+# ---------------------------------------------------------------------------
+# _detect_silences
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSilences:
+    def test_parses_matched_silence_start_end_pairs(self, tmp_path, mocker):
+        stderr = (
+            "[silencedetect @ 0x0] silence_start: 1.5\n"
+            "[silencedetect @ 0x0] silence_end: 4.25 | silence_duration: 2.75\n"
+            "[silencedetect @ 0x0] silence_start: 10\n"
+            "[silencedetect @ 0x0] silence_end: 12.1 | silence_duration: 2.1\n"
+        )
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            return_value=mocker.MagicMock(stderr=stderr),
+        )
+        assert _detect_silences(tmp_path / "clip.mp4") == [(1.5, 4.25), (10.0, 12.1)]
+
+    def test_trailing_unmatched_silence_start_is_dropped(self, tmp_path, mocker):
+        stderr = (
+            "[silencedetect @ 0x0] silence_start: 1.5\n"
+            "[silencedetect @ 0x0] silence_end: 4.25 | silence_duration: 2.75\n"
+            "[silencedetect @ 0x0] silence_start: 30.0\n"
+        )
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            return_value=mocker.MagicMock(stderr=stderr),
+        )
+        assert _detect_silences(tmp_path / "clip.mp4") == [(1.5, 4.25)]
+
+    def test_no_silence_markers_returns_empty_list(self, tmp_path, mocker):
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            return_value=mocker.MagicMock(stderr="some unrelated ffmpeg output\n"),
+        )
+        assert _detect_silences(tmp_path / "clip.mp4") == []
+
+    def test_returns_empty_list_and_logs_when_ffmpeg_missing(self, tmp_path, mocker, caplog):
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run", side_effect=FileNotFoundError
+        )
+        with caplog.at_level("DEBUG", logger="root"):
+            assert _detect_silences(tmp_path / "clip.mp4") == []
+        assert "ffmpeg not found" in caplog.text
+
+    def test_nonzero_return_code_with_no_silence_output_returns_empty_list(self, tmp_path, mocker):
+        mocker.patch(
+            "add_subs_to_videos.transcribe.subprocess.run",
+            return_value=mocker.MagicMock(stderr="Invalid data found when processing input\n"),
+        )
+        assert _detect_silences(tmp_path / "clip.mp4") == []
+
 
 # ---------------------------------------------------------------------------
 # _probe_duration
@@ -765,6 +861,38 @@ class TestTranscribeVideo:
             "[00:01 --> 00:03] Hello world",
             "[00:04 --> 00:06] How are you",
         ]
+
+    def test_on_segment_uses_silence_snapped_start(self, tmp_path, mock_transcribe):
+        # First raw segment is 1.0s -> 3.5s; a detected silence of 0.5s -> 2.0s
+        # should snap its reported start forward to 2.0s.
+        mock_transcribe.detect_silences.return_value = [(0.5, 2.0)]
+
+        def fake_transcribe(media, language="", new_segment_callback=None):
+            for seg in mock_transcribe.raw_segs:
+                new_segment_callback(seg)
+            return mock_transcribe.raw_segs
+
+        mock_transcribe.model.transcribe.side_effect = fake_transcribe
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        lines: list[str] = []
+        transcribe_video(
+            video, model=mock_transcribe.model, language=None, on_segment=lines.append
+        )
+        assert lines == [
+            "[00:02 --> 00:03] Hello world",
+            "[00:04 --> 00:06] How are you",
+        ]
+
+    def test_final_srt_uses_silence_snapped_start(self, tmp_path, mock_transcribe):
+        mock_transcribe.detect_silences.return_value = [(0.5, 2.0)]
+        video = tmp_path / "clip.mp4"
+        video.touch()
+
+        result = transcribe_video(video, model=mock_transcribe.model, language=None)
+        assert "00:00:02,000 --> 00:00:03,500" in result
+        assert "00:00:01,000" not in result
 
     def test_on_segment_skips_blank_text(self, tmp_path, mock_transcribe):
         def fake_transcribe(media, language="", new_segment_callback=None):

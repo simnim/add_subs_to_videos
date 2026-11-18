@@ -4,6 +4,7 @@ import contextlib
 import io
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,16 @@ from .srt import format_srt_entry, segments_to_srt
 # Minimum interval between throttled on_model_progress callbacks during a
 # model download, to avoid flooding a GUI's cross-thread signal queue.
 _MODEL_PROGRESS_THROTTLE_SECONDS = 0.1
+
+# ffmpeg silencedetect tuning: noise floor and minimum silence duration used
+# to independently flag silent stretches, so whisper.cpp's own (occasionally
+# too-early) segment start timestamps can be snapped forward to where audio
+# actually resumes.
+_SILENCE_NOISE_DB = "-30dB"
+_SILENCE_MIN_DURATION = 0.5
+
+_SILENCE_START_RE = re.compile(r"silence_start:\s*(-?[\d.]+)")
+_SILENCE_END_RE = re.compile(r"silence_end:\s*(-?[\d.]+)")
 
 
 class _Cancelled(Exception):
@@ -148,11 +159,17 @@ def _download_model(
     os.replace(part_path, file_path)
 
 
-def _raw_to_dicts(raw_segments) -> list[dict]:
-    return [
-        {"start": seg.t0 / 100.0, "end": seg.t1 / 100.0, "text": seg.text.strip()}
-        for seg in raw_segments
-    ]
+def _raw_to_dicts(raw_segments, silences: list[tuple[float, float]] | None = None) -> list[dict]:
+    silences = silences or []
+    dicts = []
+    for seg in raw_segments:
+        start, end = seg.t0 / 100.0, seg.t1 / 100.0
+        dicts.append({
+            "start": _snap_start_to_silence(start, end, silences),
+            "end": end,
+            "text": seg.text.strip(),
+        })
+    return dicts
 
 
 def _format_log_timestamp(seconds: float) -> str:
@@ -185,6 +202,59 @@ def _probe_duration(path: Path) -> float | None:
     except ValueError:
         logging.debug("ffprobe returned a non-numeric duration for %s", path)
         return None
+
+
+def _detect_silences(path: Path) -> list[tuple[float, float]]:
+    """Returns (start, end) second ranges of silence in `path`'s audio track.
+
+    Used to correct whisper.cpp segment start timestamps that land too early
+    across a long pause (see `_snap_start_to_silence`). Uses ffmpeg's
+    `silencedetect` filter as an independent signal, since whisper.cpp's own
+    decoder-internal timestamp tokens have no such silence awareness. Returns
+    an empty list (no correction applied) if ffmpeg is unavailable or fails,
+    mirroring `_probe_duration`'s fallback behavior.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner",
+                "-i", str(path),
+                "-vn",
+                "-af", f"silencedetect=noise={_SILENCE_NOISE_DB}:d={_SILENCE_MIN_DURATION}",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        logging.debug("ffmpeg not found; silence-based timestamp correction unavailable")
+        return []
+
+    silences: list[tuple[float, float]] = []
+    pending_start: float | None = None
+    for line in result.stderr.splitlines():
+        start_match = _SILENCE_START_RE.search(line)
+        if start_match:
+            pending_start = float(start_match.group(1))
+            continue
+        end_match = _SILENCE_END_RE.search(line)
+        if end_match and pending_start is not None:
+            silences.append((pending_start, float(end_match.group(1))))
+            pending_start = None
+    return silences
+
+
+def _snap_start_to_silence(start: float, end: float, silences: list[tuple[float, float]]) -> float:
+    """Nudges `start` forward to the end of a silence interval it falls inside.
+
+    Only ever moves the timestamp later (toward where speech actually
+    resumes), and never past `end`, so it can only correct a start that was
+    too early — it cannot introduce a new "too late" problem.
+    """
+    for silence_start, silence_end in silences:
+        if silence_start <= start < silence_end:
+            return silence_end if silence_end < end else start
+    return start
 
 
 def _describe_transcription_error(video_path: Path, exc: Exception) -> str:
@@ -290,6 +360,7 @@ def transcribe_video(
     extra: dict = {}
     if n_threads is not None:
         extra["n_threads"] = n_threads
+    silences = _detect_silences(video_path)
     part_file = None
     if cancel is not None or on_segment is not None or on_file_progress is not None or part_path is not None:
         if on_file_progress is not None and duration is None:
@@ -305,18 +376,20 @@ def transcribe_video(
             if cancel is not None and cancel.is_set():
                 raise _Cancelled()
             text = segment.text.strip()
+            end_sec = segment.t1 / 100.0
+            start_sec = _snap_start_to_silence(segment.t0 / 100.0, end_sec, silences)
             if text and on_segment is not None:
-                start = _format_log_timestamp(segment.t0 / 100.0)
-                end = _format_log_timestamp(segment.t1 / 100.0)
+                start = _format_log_timestamp(start_sec)
+                end = _format_log_timestamp(end_sec)
                 on_segment(f"[{start} --> {end}] {text}")
             if text and part_file is not None:
-                entry = format_srt_entry(write_index, segment.t0 / 100.0, segment.t1 / 100.0, text)
+                entry = format_srt_entry(write_index, start_sec, end_sec, text)
                 part_file.write(("\n" if write_index > 1 else "") + entry)
                 part_file.flush()
             if text:
                 write_index += 1
             if on_file_progress is not None and duration:
-                on_file_progress(min(segment.t1 / 100.0 / duration, 1.0))
+                on_file_progress(min(end_sec / duration, 1.0))
 
         extra["new_segment_callback"] = _on_new_segment
 
@@ -335,7 +408,7 @@ def transcribe_video(
     finally:
         if part_file is not None:
             part_file.close()
-    segments = _raw_to_dicts(raw_segs)
+    segments = _raw_to_dicts(raw_segs, silences)
     return segments_to_srt(segments)
 
 

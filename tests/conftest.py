@@ -47,9 +47,15 @@ def mock_transcribe(mocker):
     )
     # Avoid a real network request from the model pre-download step.
     mocker.patch("add_subs_to_videos.transcribe._download_model")
+    # Avoid a real ffmpeg subprocess call from the silence-detection step;
+    # tests that care about silence-snapping override this return value.
+    mock_detect_silences = mocker.patch(
+        "add_subs_to_videos.transcribe._detect_silences", return_value=[]
+    )
 
     return types.SimpleNamespace(
         model_cls=mock_model_cls,
         model=mock_model_instance,
         raw_segs=raw_segs,
+        detect_silences=mock_detect_silences,
     )
